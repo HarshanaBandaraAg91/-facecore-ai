@@ -26,6 +26,14 @@ interface ComparisonWorkspaceProps {
   }) => void;
 }
 
+/**
+ * Intentional visual presentation duration (approx 5.0 seconds).
+ * CPU neural inference completes in ~20-35ms, but a minimum 5s visual sequence
+ * is maintained so the user can inspect the staged cyber-intelligence verification.
+ * The true CPU latency is preserved in response.inference_latency_ms and displayed accurately.
+ */
+export const TARGET_VISUAL_PROGRESS_DURATION_MS = 5000;
+
 export const ComparisonWorkspace: React.FC<ComparisonWorkspaceProps> = ({
   onAddHistory,
   onShowToast,
@@ -63,6 +71,7 @@ export const ComparisonWorkspace: React.FC<ComparisonWorkspaceProps> = ({
   const abortControllerRef = useRef<AbortController | null>(null);
   const progressTimerRef = useRef<number | null>(null);
   const completionTimerRef = useRef<number | null>(null);
+  const cancelVisualDurationRef = useRef<(() => void) | null>(null);
 
   const isComparing =
     comparisonState === 'validating' ||
@@ -80,6 +89,7 @@ export const ComparisonWorkspace: React.FC<ComparisonWorkspaceProps> = ({
     return () => {
       if (progressTimerRef.current) clearInterval(progressTimerRef.current);
       if (completionTimerRef.current) clearTimeout(completionTimerRef.current);
+      cancelVisualDurationRef.current?.();
       abortControllerRef.current?.abort();
     };
   }, []);
@@ -88,6 +98,8 @@ export const ComparisonWorkspace: React.FC<ComparisonWorkspaceProps> = ({
     currentRequestIdRef.current += 1;
     if (progressTimerRef.current) clearInterval(progressTimerRef.current);
     if (completionTimerRef.current) clearTimeout(completionTimerRef.current);
+    cancelVisualDurationRef.current?.();
+    cancelVisualDurationRef.current = null;
     abortControllerRef.current?.abort();
     setComparisonState('idle');
     setProgressPercent(0);
@@ -173,7 +185,10 @@ export const ComparisonWorkspace: React.FC<ComparisonWorkspaceProps> = ({
     const thisRequestId = ++currentRequestIdRef.current;
     if (progressTimerRef.current) clearInterval(progressTimerRef.current);
     if (completionTimerRef.current) clearTimeout(completionTimerRef.current);
+    cancelVisualDurationRef.current?.();
+    cancelVisualDurationRef.current = null;
     abortControllerRef.current?.abort();
+
     const abortController = new AbortController();
     abortControllerRef.current = abortController;
 
@@ -181,34 +196,50 @@ export const ComparisonWorkspace: React.FC<ComparisonWorkspaceProps> = ({
     setComparisonResult(null);
     setComparisonError(null);
     setComparisonState('processing');
-    setProgressPercent(6);
+    setProgressPercent(4);
     setCurrentStageIndex(0);
 
-    const startTime = Date.now();
+    const startTime = performance.now();
 
-    // Staged progress ticker advancing smoothly towards ~88% while waiting for backend
+    // Staged progress ticker advancing smoothly towards ~92% across TARGET_VISUAL_PROGRESS_DURATION_MS
     progressTimerRef.current = window.setInterval(() => {
       if (currentRequestIdRef.current !== thisRequestId) return;
-      const elapsed = Date.now() - startTime;
+      const elapsed = performance.now() - startTime;
+      const progressFraction = Math.min(1, elapsed / TARGET_VISUAL_PROGRESS_DURATION_MS);
 
-      setProgressPercent((prev) => {
-        if (prev >= 88) return 88;
-        const delta = Math.max(1, Math.round((88 - prev) * 0.15));
-        return Math.min(88, prev + delta);
-      });
+      // Smooth progress calculation capping at 92% until both conditions are met
+      const targetPercent = Math.min(92, Math.round(4 + progressFraction * 88));
+      setProgressPercent((prev) => Math.max(prev, targetPercent));
 
+      // 6 stages evenly distributed across the 5000ms visual timeline (~800ms each)
       setCurrentStageIndex(() => {
-        if (elapsed < 150) return 0;
-        if (elapsed < 350) return 1;
-        if (elapsed < 600) return 2;
-        if (elapsed < 850) return 3;
-        if (elapsed < 1100) return 4;
+        if (elapsed < 750) return 0;
+        if (elapsed < 1550) return 1;
+        if (elapsed < 2400) return 2;
+        if (elapsed < 3250) return 3;
+        if (elapsed < 4100) return 4;
         return 5;
       });
-    }, 80);
+    }, 60);
+
+    // Create cancellable visual duration promise (~5000ms)
+    let visualDurationTimeout: number = 0;
+    const visualDurationPromise = new Promise<void>((resolve) => {
+      visualDurationTimeout = window.setTimeout(resolve, TARGET_VISUAL_PROGRESS_DURATION_MS);
+      cancelVisualDurationRef.current = () => {
+        window.clearTimeout(visualDurationTimeout);
+        resolve();
+      };
+    });
 
     try {
-      const response = await compareImagesApi(slotA.file, slotB.file, abortController.signal);
+      const apiPromise = compareImagesApi(slotA.file, slotB.file, abortController.signal);
+
+      // Concurrently wait for BOTH:
+      // 1. Real API call completion & validation
+      // 2. Minimum visual duration (approx 5.0 seconds)
+      // If apiPromise rejects, Promise.all rejects IMMEDIATELY without waiting 5 seconds!
+      const [response] = await Promise.all([apiPromise, visualDurationPromise]);
 
       // Guard against stale or cancelled requests
       if (currentRequestIdRef.current !== thisRequestId) return;
@@ -224,12 +255,13 @@ export const ComparisonWorkspace: React.FC<ComparisonWorkspaceProps> = ({
         throw new Error('Received malformed response payload from evaluation engine.');
       }
 
+      // Both conditions satisfied: Real API complete & validated + 5s visual duration elapsed!
       // Enter completing state: jump visual progress to 100% and activate final stage
       setComparisonState('completing');
       setProgressPercent(100);
       setCurrentStageIndex(5);
 
-      // Brief accessible completion delay before revealing actual ResultPanel
+      // Brief accessible completion delay before unmounting progress and revealing actual ResultPanel
       completionTimerRef.current = window.setTimeout(() => {
         if (currentRequestIdRef.current !== thisRequestId) return;
 
@@ -266,8 +298,11 @@ export const ComparisonWorkspace: React.FC<ComparisonWorkspaceProps> = ({
         });
       }, 350);
     } catch (err: unknown) {
-      if (currentRequestIdRef.current !== thisRequestId) return;
+      // Clean up visual duration wait immediately on error
+      window.clearTimeout(visualDurationTimeout);
+      cancelVisualDurationRef.current = null;
       if (progressTimerRef.current) clearInterval(progressTimerRef.current);
+      if (currentRequestIdRef.current !== thisRequestId) return;
       if (err instanceof Error && err.name === 'AbortError') return;
 
       const errMsg =

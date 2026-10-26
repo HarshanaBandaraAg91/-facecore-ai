@@ -380,7 +380,7 @@ export const ComparisonProgress: React.FC<ComparisonProgressProps> = ({
       >
         <Info size={12} color="var(--text-muted)" style={{ flexShrink: 0 }} />
         <span>
-          STAGED CLIENT WORKFLOW // Neural inference executes locally on CPU via OpenCV YuNet (detection) & SFace (128-d recognition). 100% resolution occurs only upon verified HTTP 200 payload.
+          STAGED CLIENT WORKFLOW // Neural inference executes locally on CPU via OpenCV YuNet (detection) & SFace (128-d recognition) in ~20–35 ms. The ~5-second visual presentation displays client pipeline stages before cryptographically verified result reveal.
         </span>
       </div>
     </div>

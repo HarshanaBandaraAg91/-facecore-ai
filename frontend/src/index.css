@@ -847,7 +847,9 @@ button:focus-visible, a:focus-visible, input:focus-visible {
    ========================================================================== */
 
 .comparison-progress-card {
-  margin-top: 24px;
+  margin-top: 0;
+  margin-bottom: 24px;
+  width: 100%;
   background-color: var(--bg-card);
   border: 1px solid var(--border-medium);
   border-radius: 8px;

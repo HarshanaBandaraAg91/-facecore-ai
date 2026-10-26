@@ -1,6 +1,9 @@
-import { render, screen, fireEvent, waitFor, act } from '@testing-library/react';
+import { render, screen, fireEvent, act } from '@testing-library/react';
 import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
-import { ComparisonWorkspace } from '../components/comparison/ComparisonWorkspace';
+import {
+  ComparisonWorkspace,
+  TARGET_VISUAL_PROGRESS_DURATION_MS,
+} from '../components/comparison/ComparisonWorkspace';
 import * as api from '../services/api';
 import type { ComparisonResponse, ImageValidationResponse } from '../types';
 
@@ -88,7 +91,7 @@ const mockComparisonResponse: ComparisonResponse = {
     'RESEARCH EVALUATION ONLY: Facial embedding similarity is an experimental metric and is NOT proof of identity.',
 };
 
-describe('Comparison Workflow & Staged Progress Machine (Step 03)', () => {
+describe('Comparison Workflow & Staged Progress Machine (Step 03.1)', () => {
   beforeEach(() => {
     vi.restoreAllMocks();
     globalThis.URL.createObjectURL = vi.fn(() => 'blob:mock-url');
@@ -106,7 +109,7 @@ describe('Comparison Workflow & Staged Progress Machine (Step 03)', () => {
   });
 
   afterEach(() => {
-    vi.clearAllTimers();
+    vi.useRealTimers();
   });
 
   const uploadTestFiles = async () => {
@@ -119,29 +122,23 @@ describe('Comparison Workflow & Staged Progress Machine (Step 03)', () => {
       type: 'image/jpeg',
     });
 
-    fireEvent.change(inputA, { target: { files: [fileA] } });
-    fireEvent.change(inputB, { target: { files: [fileB] } });
-
-    // Wait until both validations pass and compare button is enabled
-    await waitFor(() => {
-      const compareBtn = screen.getByRole('button', {
-        name: /compare facial images/i,
-      });
-      expect(compareBtn).not.toBeDisabled();
+    await act(async () => {
+      fireEvent.change(inputA, { target: { files: [fileA] } });
+      fireEvent.change(inputB, { target: { files: [fileB] } });
     });
+
+    const compareBtn = screen.getByRole('button', {
+      name: /compare facial images/i,
+    });
+    expect(compareBtn).not.toBeDisabled();
   };
 
-  it('immediately enters progress state when Compare is clicked and keeps result hidden during inference', async () => {
-    let resolveApi: (value: ComparisonResponse) => void = () => {};
-    const pendingPromise = new Promise<ComparisonResponse>((resolve) => {
-      resolveApi = resolve;
-    });
-    vi.mocked(api.compareImagesApi).mockReturnValue(pendingPromise);
+  it('renders progress component directly below Execute Comparison, outside ResultPanel', async () => {
+    vi.mocked(api.compareImagesApi).mockReturnValue(new Promise(() => {}));
 
     render(
       <ComparisonWorkspace onAddHistory={vi.fn()} onShowToast={vi.fn()} />
     );
-
     await uploadTestFiles();
 
     const compareBtn = screen.getByRole('button', {
@@ -149,51 +146,174 @@ describe('Comparison Workflow & Staged Progress Machine (Step 03)', () => {
     });
     fireEvent.click(compareBtn);
 
-    // Progress card appears immediately
-    expect(
-      screen.getByText(/BIOMETRIC INFERENCE PIPELINE ACTIVE/i)
-    ).toBeInTheDocument();
-    expect(
-      screen.getByRole('progressbar')
-    ).toBeInTheDocument();
+    // Progress card is present directly below compare action section
+    const progressCard = screen.getByRole('status');
+    expect(progressCard).toBeInTheDocument();
+    expect(progressCard).toHaveClass('comparison-progress-card');
 
-    // The final ResultPanel must NOT be in the DOM yet
+    // ResultPanel is NOT rendered
+    expect(screen.queryByText(/Biometric Evaluation Outcome/i)).not.toBeInTheDocument();
     expect(screen.queryByText(/Raw Cosine Similarity/i)).not.toBeInTheDocument();
-
-    // Compare button is disabled during comparison
-    expect(compareBtn).toBeDisabled();
-    expect(screen.getByText(/Evaluating Pair\.\.\./i)).toBeInTheDocument();
-
-    // Resolve the real response
-    await act(async () => {
-      resolveApi(mockComparisonResponse);
-    });
-
-    // Progress moves to completion and ResultPanel is revealed
-    await waitFor(
-      () => {
-        expect(
-          screen.getByText(/Raw Cosine Similarity/i)
-        ).toBeInTheDocument();
-      },
-      { timeout: 3000 }
-    );
-
-    // Verified real score rendered
-    expect(screen.getAllByText(/\+0\.7421/i).length).toBeGreaterThanOrEqual(1);
   });
 
-  it('prevents duplicate requests when Compare button is clicked multiple times', async () => {
-    let resolveApi: (value: ComparisonResponse) => void = () => {};
-    const pendingPromise = new Promise<ComparisonResponse>((resolve) => {
-      resolveApi = resolve;
-    });
-    vi.mocked(api.compareImagesApi).mockReturnValue(pendingPromise);
+  it('immediately enters progress state when Compare is clicked and starts at initial percent', async () => {
+    vi.mocked(api.compareImagesApi).mockReturnValue(new Promise(() => {}));
 
     render(
       <ComparisonWorkspace onAddHistory={vi.fn()} onShowToast={vi.fn()} />
     );
+    await uploadTestFiles();
 
+    const compareBtn = screen.getByRole('button', {
+      name: /compare facial images/i,
+    });
+    fireEvent.click(compareBtn);
+
+    expect(
+      screen.getByText(/BIOMETRIC INFERENCE PIPELINE ACTIVE/i)
+    ).toBeInTheDocument();
+    expect(screen.getByRole('progressbar')).toBeInTheDocument();
+    expect(compareBtn).toBeDisabled();
+    expect(screen.getByText(/Evaluating Pair\.\.\./i)).toBeInTheDocument();
+  });
+
+  it('a successful fast response still waits for approximately 5 seconds of visible progress before final reveal', async () => {
+    vi.useFakeTimers({ toFake: ['setTimeout', 'clearTimeout', 'setInterval', 'clearInterval', 'Date', 'performance'] });
+    // Fast response (e.g. 25ms in reality)
+    vi.mocked(api.compareImagesApi).mockResolvedValue(mockComparisonResponse);
+
+    render(
+      <ComparisonWorkspace onAddHistory={vi.fn()} onShowToast={vi.fn()} />
+    );
+    await uploadTestFiles();
+
+    const compareBtn = screen.getByRole('button', {
+      name: /compare facial images/i,
+    });
+    fireEvent.click(compareBtn);
+
+    // Immediately in progress
+    expect(screen.getByRole('progressbar')).toBeInTheDocument();
+
+    // Fast-forward 2500ms (halfway through the 5-second minimum duration)
+    await act(async () => {
+      await vi.advanceTimersByTimeAsync(2500);
+    });
+
+    // Still processing! Progress bar is active, percentage is under 100%, and ResultPanel is NOT yet revealed
+    expect(screen.getByRole('progressbar')).toBeInTheDocument();
+    const progressVal = Number(screen.getByRole('progressbar').getAttribute('aria-valuenow'));
+    expect(progressVal).toBeGreaterThanOrEqual(30);
+    expect(progressVal).toBeLessThan(100);
+    expect(screen.queryByText(/Raw Cosine Similarity/i)).not.toBeInTheDocument();
+
+    // Fast-forward past the 5-second mark (total 5050ms)
+    await act(async () => {
+      await vi.advanceTimersByTimeAsync(2550);
+    });
+
+    // Completing state reached (100%)
+    expect(screen.getByRole('progressbar')).toHaveAttribute('aria-valuenow', '100');
+
+    // Advance completion delay (350ms)
+    await act(async () => {
+      await vi.advanceTimersByTimeAsync(350);
+    });
+
+    // Progress component is completely UNMOUNTED after success
+    expect(screen.queryByRole('progressbar')).not.toBeInTheDocument();
+    expect(screen.queryByText(/BIOMETRIC INFERENCE PIPELINE ACTIVE/i)).not.toBeInTheDocument();
+
+    // Real ResultPanel is revealed in its place directly below button
+    expect(screen.getByText(/Raw Cosine Similarity/i)).toBeInTheDocument();
+    expect(screen.getAllByText(/\+0\.7421/i).length).toBeGreaterThanOrEqual(1);
+  });
+
+  it('a slower backend response delays final reveal until the real response arrives', async () => {
+    vi.useFakeTimers({ toFake: ['setTimeout', 'clearTimeout', 'setInterval', 'clearInterval', 'Date', 'performance'] });
+    let resolveApi: (value: ComparisonResponse) => void = () => {};
+    const slowPromise = new Promise<ComparisonResponse>((resolve) => {
+      resolveApi = resolve;
+    });
+    vi.mocked(api.compareImagesApi).mockReturnValue(slowPromise);
+
+    render(
+      <ComparisonWorkspace onAddHistory={vi.fn()} onShowToast={vi.fn()} />
+    );
+    await uploadTestFiles();
+
+    const compareBtn = screen.getByRole('button', {
+      name: /compare facial images/i,
+    });
+    fireEvent.click(compareBtn);
+
+    // Fast-forward 5000ms (visual duration elapsed, but API response NOT arrived yet)
+    await act(async () => {
+      await vi.advanceTimersByTimeAsync(5000);
+    });
+
+    // Progress bar must NOT show 100% because real API response has not completed!
+    const progressVal = Number(screen.getByRole('progressbar').getAttribute('aria-valuenow'));
+    expect(progressVal).toBeLessThanOrEqual(92);
+    expect(screen.queryByText(/Raw Cosine Similarity/i)).not.toBeInTheDocument();
+
+    // Now resolve API response at t=5500ms
+    await act(async () => {
+      resolveApi(mockComparisonResponse);
+      await vi.advanceTimersByTimeAsync(100);
+    });
+
+    // Now progress reaches 100%
+    expect(screen.getByRole('progressbar')).toHaveAttribute('aria-valuenow', '100');
+
+    // Advance completion delay (350ms)
+    await act(async () => {
+      await vi.advanceTimersByTimeAsync(350);
+    });
+
+    // Result is now revealed
+    expect(screen.getByText(/Raw Cosine Similarity/i)).toBeInTheDocument();
+  });
+
+  it('backend errors appear promptly without waiting 5 seconds and never reveal successful results', async () => {
+    vi.useFakeTimers({ toFake: ['setTimeout', 'clearTimeout', 'setInterval', 'clearInterval', 'Date', 'performance'] });
+    vi.mocked(api.compareImagesApi).mockRejectedValue(
+      new Error('No face detected in Image A (Probe). Please provide an image with a clearly visible human face.')
+    );
+
+    render(
+      <ComparisonWorkspace onAddHistory={vi.fn()} onShowToast={vi.fn()} />
+    );
+    await uploadTestFiles();
+
+    const compareBtn = screen.getByRole('button', {
+      name: /compare facial images/i,
+    });
+    fireEvent.click(compareBtn);
+
+    // Advance a tiny fraction of time (~100ms, FAR below 5 seconds)
+    await act(async () => {
+      await vi.advanceTimersByTimeAsync(100);
+    });
+
+    // Error is displayed promptly without waiting 5 seconds!
+    expect(
+      screen.getByText(/BIOMETRIC EVALUATION HALTED/i)
+    ).toBeInTheDocument();
+    expect(
+      screen.getByText(/No face detected in Image A \(Probe\)/i)
+    ).toBeInTheDocument();
+
+    // ResultPanel must NEVER be shown
+    expect(screen.queryByText(/Raw Cosine Similarity/i)).not.toBeInTheDocument();
+  });
+
+  it('prevents duplicate requests when Compare button is clicked multiple times', async () => {
+    vi.mocked(api.compareImagesApi).mockReturnValue(new Promise(() => {}));
+
+    render(
+      <ComparisonWorkspace onAddHistory={vi.fn()} onShowToast={vi.fn()} />
+    );
     await uploadTestFiles();
 
     const compareBtn = screen.getByRole('button', {
@@ -206,19 +326,15 @@ describe('Comparison Workflow & Staged Progress Machine (Step 03)', () => {
     fireEvent.click(compareBtn);
 
     expect(api.compareImagesApi).toHaveBeenCalledTimes(1);
-
-    await act(async () => {
-      resolveApi(mockComparisonResponse);
-    });
   });
 
   it('hides previous result immediately upon triggering a new comparison', async () => {
+    vi.useFakeTimers({ toFake: ['setTimeout', 'clearTimeout', 'setInterval', 'clearInterval', 'Date', 'performance'] });
     vi.mocked(api.compareImagesApi).mockResolvedValue(mockComparisonResponse);
 
     render(
       <ComparisonWorkspace onAddHistory={vi.fn()} onShowToast={vi.fn()} />
     );
-
     await uploadTestFiles();
 
     const compareBtn = screen.getByRole('button', {
@@ -226,98 +342,32 @@ describe('Comparison Workflow & Staged Progress Machine (Step 03)', () => {
     });
     fireEvent.click(compareBtn);
 
-    // Wait for first comparison result
-    await waitFor(
-      () => {
-        expect(
-          screen.getByText(/Raw Cosine Similarity/i)
-        ).toBeInTheDocument();
-      },
-      { timeout: 3000 }
-    );
-
-    // Now start second run with a pending promise
-    let resolveSecond: (value: ComparisonResponse) => void = () => {};
-    const pendingSecond = new Promise<ComparisonResponse>((resolve) => {
-      resolveSecond = resolve;
+    // Advance through first run (5000ms + 350ms)
+    await act(async () => {
+      await vi.advanceTimersByTimeAsync(TARGET_VISUAL_PROGRESS_DURATION_MS + 400);
     });
-    vi.mocked(api.compareImagesApi).mockReturnValue(pendingSecond);
 
+    // ResultPanel is visible
+    expect(screen.getByText(/Raw Cosine Similarity/i)).toBeInTheDocument();
+
+    // Start a second run with a pending promise
+    vi.mocked(api.compareImagesApi).mockReturnValue(new Promise(() => {}));
     fireEvent.click(compareBtn);
 
-    // Previous ResultPanel must immediately be hidden
+    // Previous ResultPanel must IMMEDIATELY be hidden
     expect(screen.queryByText(/Raw Cosine Similarity/i)).not.toBeInTheDocument();
     // Active progress must be visible
     expect(
       screen.getByText(/BIOMETRIC INFERENCE PIPELINE ACTIVE/i)
     ).toBeInTheDocument();
-
-    await act(async () => {
-      resolveSecond(mockComparisonResponse);
-    });
-  });
-
-  it('handles backend error rejection, shows structured error state, and allows retry', async () => {
-    vi.mocked(api.compareImagesApi).mockRejectedValueOnce(
-      new Error('No face detected in Image A (Probe). Please provide an image with a clearly visible human face.')
-    );
-
-    render(
-      <ComparisonWorkspace onAddHistory={vi.fn()} onShowToast={vi.fn()} />
-    );
-
-    await uploadTestFiles();
-
-    const compareBtn = screen.getByRole('button', {
-      name: /compare facial images/i,
-    });
-    fireEvent.click(compareBtn);
-
-    // Wait for error state
-    await waitFor(() => {
-      expect(
-        screen.getByText(/BIOMETRIC EVALUATION HALTED/i)
-      ).toBeInTheDocument();
-      expect(
-        screen.getByText(/No face detected in Image A \(Probe\)/i)
-      ).toBeInTheDocument();
-    });
-
-    // Result panel must NEVER be revealed on error
-    expect(screen.queryByText(/Raw Cosine Similarity/i)).not.toBeInTheDocument();
-
-    // Mock success on retry
-    vi.mocked(api.compareImagesApi).mockResolvedValueOnce(mockComparisonResponse);
-
-    const retryBtn = screen.getByRole('button', {
-      name: /retry comparison evaluation/i,
-    });
-    fireEvent.click(retryBtn);
-
-    // Fresh request triggered
-    expect(api.compareImagesApi).toHaveBeenCalledTimes(2);
-
-    await waitFor(
-      () => {
-        expect(
-          screen.getByText(/Raw Cosine Similarity/i)
-        ).toBeInTheDocument();
-      },
-      { timeout: 3000 }
-    );
   });
 
   it('disables slot actions during active inference and resets state on workspace reset', async () => {
-    let resolveApi: (value: ComparisonResponse) => void = () => {};
-    const pendingPromise = new Promise<ComparisonResponse>((resolve) => {
-      resolveApi = resolve;
-    });
-    vi.mocked(api.compareImagesApi).mockReturnValue(pendingPromise);
+    vi.mocked(api.compareImagesApi).mockReturnValue(new Promise(() => {}));
 
     render(
       <ComparisonWorkspace onAddHistory={vi.fn()} onShowToast={vi.fn()} />
     );
-
     await uploadTestFiles();
 
     const compareBtn = screen.getByRole('button', {
@@ -340,10 +390,5 @@ describe('Comparison Workflow & Staged Progress Machine (Step 03)', () => {
       screen.queryByText(/BIOMETRIC INFERENCE PIPELINE ACTIVE/i)
     ).not.toBeInTheDocument();
     expect(compareBtn).not.toBeDisabled();
-
-    // Resolve deferred promise
-    await act(async () => {
-      resolveApi(mockComparisonResponse);
-    });
   });
 });

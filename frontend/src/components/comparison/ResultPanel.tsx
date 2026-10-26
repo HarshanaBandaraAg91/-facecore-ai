@@ -38,7 +38,7 @@ export const ResultPanel: React.FC<ResultPanelProps> = ({ result }) => {
   const threshold = result.provisional_threshold ?? 0.363;
 
   return (
-    <div className="card results-card" style={{ marginTop: '24px' }}>
+    <div className="card results-card" style={{ marginTop: '0', marginBottom: '24px' }}>
       <div className="card-header">
         <div className="card-title">
           <Layers size={18} color="var(--crimson-primary)" />
