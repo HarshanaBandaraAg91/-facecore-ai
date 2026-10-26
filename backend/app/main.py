@@ -11,19 +11,24 @@ from app.models.schemas import (
     ImageValidationResponse,
     ComparisonResponse,
     EngineMetadata,
-    EngineStatus,
 )
 from app.services.image_validator import validate_image_bytes
-from app.engine.stub_engine import PendingIntegrationEngine
+from app.engine.real_engine import (
+    RealFacialEmbeddingEngine,
+    NoFaceDetectedError,
+    MultipleFacesDetectedError,
+    ModelNotReadyError,
+    InvalidEmbeddingError,
+)
 
 # Initialize application
 app = FastAPI(
     title=settings.app_name,
-    version=settings.app_version,
+    version="0.2.0-alpha",
     description=(
         "Biometric facial image evaluation & similarity analysis platform. "
         "Engineered with strict scientific integrity, zero score fabrication, "
-        "and modular neural embedding architecture."
+        "and real local neural embedding extraction via YuNet and SFace."
     ),
 )
 
@@ -36,8 +41,8 @@ app.add_middleware(
     allow_headers=["*"],
 )
 
-# Active facial embedding engine instance (modular slot)
-active_engine = PendingIntegrationEngine()
+# Active facial embedding engine instance (Production SFace + YuNet engine)
+active_engine = RealFacialEmbeddingEngine()
 
 
 @app.get("/api/health", response_model=HealthResponse, tags=["System"])
@@ -46,7 +51,7 @@ async def health_check() -> HealthResponse:
     return HealthResponse(
         status="ok",
         app=settings.app_name,
-        version=settings.app_version,
+        version="0.2.0-alpha",
         timestamp=datetime.now(timezone.utc).isoformat(),
         engine_status=active_engine.get_metadata().status,
         security_mode="ephemeral_local_strict",
@@ -55,7 +60,7 @@ async def health_check() -> HealthResponse:
 
 @app.get("/api/engine-info", response_model=EngineMetadata, tags=["Engine"])
 async def get_engine_info() -> EngineMetadata:
-    """Retrieve metadata about the currently mounted inference engine."""
+    """Retrieve metadata about the currently active inference engine."""
     return active_engine.get_metadata()
 
 
@@ -90,11 +95,10 @@ async def compare_images(
     image_a: UploadFile = File(..., description="Probe image (Image A)"),
     image_b: UploadFile = File(..., description="Reference image (Image B)"),
 ) -> ComparisonResponse:
-    """Validate two facial images and evaluate through the modular comparison engine.
+    """Validate two facial images and evaluate through the real neural embedding engine.
 
-    In Phase 1, both images undergo rigorous cryptographic and quality checks.
-    Because an authorized embedding model is pending integration, no fabricated
-    percentage or unverified match verdict is returned.
+    Enforces exactly one usable face per image. Extracts 128-d normalized embeddings
+    and computes verified cosine similarity.
     """
     try:
         content_a = await image_a.read()
@@ -105,7 +109,7 @@ async def compare_images(
             detail=f"Error reading upload payloads: {str(exc)}",
         )
 
-    # Validate Image A
+    # Validate Image A cryptographic signature and quality bounds
     valid_a, err_a, diag_a = validate_image_bytes(
         content_a,
         filename=image_a.filename or "image_a"
@@ -116,7 +120,7 @@ async def compare_images(
             detail=f"Image A validation failed: {err_a}",
         )
 
-    # Validate Image B
+    # Validate Image B cryptographic signature and quality bounds
     valid_b, err_b, diag_b = validate_image_bytes(
         content_b,
         filename=image_b.filename or "image_b"
@@ -127,15 +131,49 @@ async def compare_images(
             detail=f"Image B validation failed: {err_b}",
         )
 
-    # Run comparison through active engine
-    response = active_engine.compare_faces(
-        image_a_bytes=content_a,
-        image_b_bytes=content_b,
-        diag_a=diag_a,
-        diag_b=diag_b,
-    )
+    # Execute facial detection, alignment, and embedding extraction
+    try:
+        response = active_engine.compare_faces(
+            image_a_bytes=content_a,
+            image_b_bytes=content_b,
+            diag_a=diag_a,
+            diag_b=diag_b,
+        )
+        return response
+    except NoFaceDetectedError as exc:
+        raise HTTPException(
+            status_code=status.HTTP_422_UNPROCESSABLE_CONTENT,
+            detail=str(exc),
+        )
+    except MultipleFacesDetectedError as exc:
+        raise HTTPException(
+            status_code=status.HTTP_422_UNPROCESSABLE_CONTENT,
+            detail=str(exc),
+        )
+    except ModelNotReadyError as exc:
+        raise HTTPException(
+            status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
+            detail=f"Biometric engine unavailable: {str(exc)}",
+        )
+    except InvalidEmbeddingError as exc:
+        raise HTTPException(
+            status_code=status.HTTP_422_UNPROCESSABLE_CONTENT,
+            detail=f"Biometric embedding extraction failed: {str(exc)}",
+        )
+    except Exception as exc:
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail=f"Inference failure during evaluation: {str(exc)}",
+        )
 
-    return response
+
+@app.exception_handler(HTTPException)
+async def http_exception_handler(request, exc: HTTPException):
+    """Pass through structured HTTP exceptions with clean JSON bodies."""
+    return JSONResponse(
+        status_code=exc.status_code,
+        content={"detail": exc.detail},
+    )
 
 
 @app.exception_handler(Exception)

@@ -105,21 +105,37 @@ def test_compare_endpoint_rejects_invalid_probe():
     assert "Image A validation failed" in response.json()["detail"]
 
 
-def test_compare_endpoint_pending_integration():
-    """Verify compare endpoint validates both images and returns pending integration notice without fake score."""
-    img_a = create_test_image_bytes(200, 200, "JPEG", color=(100, 110, 120))
-    img_b = create_test_image_bytes(220, 220, "PNG", color=(130, 140, 150))
+def test_compare_endpoint_rejects_when_no_face_detected():
+    """Verify compare endpoint rejects blank images where no face is present."""
+    blank_a = create_test_image_bytes(200, 200, "JPEG", color=(100, 110, 120))
+    blank_b = create_test_image_bytes(220, 220, "PNG", color=(130, 140, 150))
 
     files = {
-        "image_a": ("probe.jpg", img_a, "image/jpeg"),
-        "image_b": ("reference.png", img_b, "image/png"),
+        "image_a": ("probe.jpg", blank_a, "image/jpeg"),
+        "image_b": ("reference.png", blank_b, "image/png"),
+    }
+    response = client.post("/api/compare", files=files)
+    assert response.status_code == 422
+    assert "No face detected" in response.json()["detail"]
+
+
+def test_compare_endpoint_with_single_face_images():
+    """Verify compare endpoint extracts embeddings and computes real cosine similarity."""
+    from tests.test_engine import create_single_face_image_bytes
+
+    face_a = create_single_face_image_bytes(320, 320)
+    face_b = create_single_face_image_bytes(320, 320)
+
+    files = {
+        "image_a": ("probe.jpg", face_a, "image/jpeg"),
+        "image_b": ("reference.jpg", face_b, "image/jpeg"),
     }
     response = client.post("/api/compare", files=files)
     assert response.status_code == 200
     res = response.json()
-    assert res["status"] == "engine_pending_integration"
-    assert res["similarity_score"] is None
-    assert res["is_match"] is None
-    assert "INFERENCE ENGINE NOT CONFIGURED" in res["interpretation_notice"]
-    assert res["image_a_diagnostics"]["width"] == 200
-    assert res["image_b_diagnostics"]["width"] == 220
+    assert res["status"] == "evaluation_completed"
+    assert res["raw_cosine_similarity"] is not None
+    assert -1.0 <= res["raw_cosine_similarity"] <= 1.0
+    assert res["transformed_display_score"] is not None
+    assert 0.0 <= res["transformed_display_score"] <= 100.0
+    assert "SFace" in res["interpretation_notice"]

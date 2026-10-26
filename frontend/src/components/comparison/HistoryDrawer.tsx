@@ -114,9 +114,20 @@ export const HistoryDrawer: React.FC<HistoryDrawerProps> = ({
                     <Clock size={11} />
                     {new Date(entry.timestamp).toLocaleTimeString()}
                   </span>
-                  <span className="badge-tag amber" style={{ fontSize: '10px' }}>
-                    MODULAR STUB
-                  </span>
+                  {entry.rawCosineScore !== undefined && entry.rawCosineScore !== null ? (
+                    <span
+                      className={`badge-tag ${
+                        entry.isMatch ? 'emerald' : 'cyan'
+                      }`}
+                      style={{ fontSize: '10px' }}
+                    >
+                      COS: {entry.rawCosineScore >= 0 ? '+' : ''}{entry.rawCosineScore.toFixed(3)}
+                    </span>
+                  ) : (
+                    <span className="badge-tag amber" style={{ fontSize: '10px' }}>
+                      MODULAR STUB
+                    </span>
+                  )}
                 </div>
 
                 <div style={{ display: 'flex', flexDirection: 'column', gap: '4px' }}>
@@ -169,11 +180,18 @@ export const HistoryDrawer: React.FC<HistoryDrawerProps> = ({
                     marginTop: '2px',
                     display: 'flex',
                     alignItems: 'center',
-                    gap: '4px',
+                    justifyContent: 'space-between',
                   }}
                 >
-                  <Layers size={10} />
-                  <span>{entry.engineName}</span>
+                  <div style={{ display: 'flex', alignItems: 'center', gap: '4px' }}>
+                    <Layers size={10} />
+                    <span>{entry.engineName}</span>
+                  </div>
+                  {entry.isMatch !== undefined && entry.isMatch !== null && (
+                    <span style={{ color: entry.isMatch ? 'var(--emerald-primary)' : 'var(--cyan-primary)' }}>
+                      [Exp: {entry.isMatch ? 'Match' : 'Different'}]
+                    </span>
+                  )}
                 </div>
               </div>
             ))

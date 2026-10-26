@@ -1,5 +1,5 @@
 /**
- * Core type definitions for FACECORE AI.
+ * Core type definitions for FACECORE AI (Step 02 - Real Embedding Engine).
  */
 
 export type NavTab = 'compare' | 'testlab' | 'benchmarks' | 'settings';
@@ -12,8 +12,8 @@ export interface ImageQualityDiagnostics {
   filename: string;
   format: string;
   color_mode: string;
-  width: int_number;
-  height: int_number;
+  width: number;
+  height: number;
   aspect_ratio: string;
   file_size_bytes: number;
   sha256_hash: string;
@@ -21,11 +21,16 @@ export interface ImageQualityDiagnostics {
   contrast_std: number;
   brightness_mean: number;
   resolution_category: string;
+  
+  // Face detection telemetry
+  face_detected?: boolean;
+  face_count?: number;
+  face_confidence?: number | null;
+  face_bounding_box?: number[] | null;
+  
   passes_quality_check: boolean;
   warnings: string[];
 }
-
-type int_number = number;
 
 export interface ImageValidationResponse {
   is_valid: boolean;
@@ -41,6 +46,10 @@ export interface EngineMetadata {
   is_mock_data: boolean;
   description: string;
   supported_models: string[];
+  embedding_dimension?: number;
+  inference_device?: string;
+  weights_license?: string;
+  preprocessing_details?: string;
 }
 
 export interface ComparisonResponse {
@@ -50,8 +59,14 @@ export interface ComparisonResponse {
   image_a_diagnostics: ImageQualityDiagnostics;
   image_b_diagnostics: ImageQualityDiagnostics;
   similarity_score: number | null;
+  raw_cosine_similarity: number | null;
+  transformed_display_score: number | null;
+  provisional_threshold: number | null;
   is_match: boolean | null;
+  threshold_notice: string | null;
+  inference_latency_ms: number | null;
   interpretation_notice: string;
+  ethical_disclaimer?: string;
 }
 
 export interface HealthResponse {
@@ -84,4 +99,7 @@ export interface ComparisonHistoryEntry {
   dimensionsB: string;
   engineName: string;
   statusNotice: string;
+  rawCosineScore?: number | null;
+  displayScore?: number | null;
+  isMatch?: boolean | null;
 }

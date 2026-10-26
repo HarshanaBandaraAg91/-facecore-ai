@@ -7,6 +7,7 @@ import {
   Sun,
   Activity,
   Hash,
+  UserCheck,
 } from 'lucide-react';
 import type { ImageQualityDiagnostics } from '../../types';
 
@@ -84,6 +85,31 @@ export const QualityDiagnostics: React.FC<QualityDiagnosticsProps> = ({
           </tr>
         </thead>
         <tbody>
+          {diagnostics.face_detected !== undefined && (
+            <tr>
+              <td>
+                <div style={{ display: 'flex', alignItems: 'center', gap: '5px' }}>
+                  <UserCheck size={12} color="var(--emerald-primary)" />
+                  <span>Face Localization</span>
+                </div>
+              </td>
+              <td>
+                <span
+                  className="mono-text"
+                  style={{
+                    color: diagnostics.face_detected
+                      ? 'var(--emerald-primary)'
+                      : 'var(--crimson-primary)',
+                  }}
+                >
+                  {diagnostics.face_detected
+                    ? `1 Face (${diagnostics.face_confidence ? (diagnostics.face_confidence * 100).toFixed(1) : '100'}% conf)`
+                    : `${diagnostics.face_count ?? 0} Faces Detected`}
+                </span>
+              </td>
+              <td style={{ color: 'var(--text-dim)' }}>Exactly 1 Face Required</td>
+            </tr>
+          )}
           <tr>
             <td>Container / Color Space</td>
             <td>

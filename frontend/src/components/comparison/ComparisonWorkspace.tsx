@@ -138,13 +138,21 @@ export const ComparisonWorkspace: React.FC<ComparisonWorkspaceProps> = ({
         dimensionsB: `${response.image_b_diagnostics.width}x${response.image_b_diagnostics.height}`,
         engineName: response.engine.name,
         statusNotice: response.status,
+        rawCosineScore: response.raw_cosine_similarity,
+        displayScore: response.transformed_display_score,
+        isMatch: response.is_match,
       };
       onAddHistory(historyEntry);
 
+      const cosineFormatted =
+        response.raw_cosine_similarity !== null && response.raw_cosine_similarity !== undefined
+          ? (response.raw_cosine_similarity >= 0 ? '+' : '') + response.raw_cosine_similarity.toFixed(4)
+          : 'N/A';
+
       onShowToast({
         type: 'success',
-        title: 'Technical Checks Complete',
-        message: 'Pair differential analysis generated. Inference engine is in modular stub mode.',
+        title: 'Facial Evaluation Complete',
+        message: `Embeddings extracted via ${response.engine.name}. Raw Cosine: ${cosineFormatted}`,
       });
     } catch (err: unknown) {
       const errMsg =
