@@ -103,3 +103,17 @@ export interface ComparisonHistoryEntry {
   displayScore?: number | null;
   isMatch?: boolean | null;
 }
+
+export type ComparisonProcessingState =
+  | 'idle'
+  | 'validating'
+  | 'processing'
+  | 'completing'
+  | 'success'
+  | 'error';
+
+export interface ComparisonStageInfo {
+  id: string;
+  label: string;
+  detail: string;
+}

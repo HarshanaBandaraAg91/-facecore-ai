@@ -842,6 +842,177 @@ button:focus-visible, a:focus-visible, input:focus-visible {
   border-color: var(--crimson-border);
 }
 
+/* ==========================================================================
+   STEP 03: COMPARISON PROGRESS & STAGED SEQUENCE
+   ========================================================================== */
+
+.comparison-progress-card {
+  margin-top: 24px;
+  background-color: var(--bg-card);
+  border: 1px solid var(--border-medium);
+  border-radius: 8px;
+  overflow: hidden;
+  box-shadow: var(--shadow-card);
+  position: relative;
+  transition: border-color var(--trans-smooth), box-shadow var(--trans-smooth);
+}
+
+.comparison-progress-card.is-processing {
+  border-color: var(--crimson-border);
+  box-shadow: 0 0 25px rgba(225, 29, 72, 0.15);
+}
+
+.comparison-progress-card.is-completing {
+  border-color: var(--emerald-border);
+  box-shadow: 0 0 25px rgba(16, 185, 129, 0.15);
+}
+
+.comparison-progress-card.is-error {
+  border-color: rgba(239, 68, 68, 0.4);
+  box-shadow: 0 0 25px rgba(239, 68, 68, 0.15);
+}
+
+.progress-card-header {
+  padding: 14px 20px;
+  background-color: var(--bg-surface);
+  border-bottom: 1px solid var(--border-subtle);
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  flex-wrap: wrap;
+  gap: 12px;
+}
+
+.progress-track-wrapper {
+  padding: 18px 20px;
+  background-color: var(--bg-input);
+  border-bottom: 1px solid var(--border-subtle);
+}
+
+.progress-numeric-row {
+  display: flex;
+  justify-content: space-between;
+  align-items: baseline;
+  margin-bottom: 10px;
+}
+
+.progress-track {
+  width: 100%;
+  height: 10px;
+  background-color: var(--bg-deep);
+  border: 1px solid var(--border-subtle);
+  border-radius: 6px;
+  overflow: hidden;
+  position: relative;
+}
+
+.progress-fill {
+  height: 100%;
+  border-radius: 5px;
+  background: linear-gradient(90deg, #be123c, #e11d48, #f43f5e);
+  box-shadow: 0 0 12px rgba(225, 29, 72, 0.5);
+  transition: width 0.18s cubic-bezier(0.4, 0, 0.2, 1);
+  position: relative;
+}
+
+.progress-fill.completing {
+  background: linear-gradient(90deg, #059669, #10b981, #34d399);
+  box-shadow: 0 0 12px rgba(16, 185, 129, 0.5);
+}
+
+.progress-fill.error {
+  background: #ef4444;
+  box-shadow: 0 0 12px rgba(239, 68, 68, 0.5);
+}
+
+.scanline-sweep {
+  position: absolute;
+  top: 0;
+  left: 0;
+  right: 0;
+  bottom: 0;
+  background: linear-gradient(
+    90deg,
+    transparent 0%,
+    rgba(255, 255, 255, 0.3) 50%,
+    transparent 100%
+  );
+  width: 40%;
+  animation: scanlineMove 1.4s infinite linear;
+  pointer-events: none;
+}
+
+@keyframes scanlineMove {
+  0% { transform: translateX(-100%); }
+  100% { transform: translateX(350%); }
+}
+
+.stages-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(280px, 1fr));
+  gap: 10px;
+  padding: 16px 20px;
+  background-color: var(--bg-card);
+}
+
+.stage-item {
+  display: flex;
+  align-items: flex-start;
+  gap: 12px;
+  padding: 10px 14px;
+  border-radius: 6px;
+  background-color: var(--bg-surface);
+  border: 1px solid var(--border-subtle);
+  transition: all var(--trans-fast);
+}
+
+.stage-item.completed {
+  border-color: rgba(16, 185, 129, 0.3);
+  background-color: rgba(16, 185, 129, 0.05);
+}
+
+.stage-item.active {
+  border-color: var(--crimson-border);
+  background-color: rgba(225, 29, 72, 0.08);
+  box-shadow: 0 0 12px rgba(225, 29, 72, 0.12);
+}
+
+.stage-item.pending {
+  opacity: 0.5;
+}
+
+.stage-dot.pending {
+  width: 14px;
+  height: 14px;
+  border-radius: 50%;
+  border: 1.5px dashed var(--text-dim);
+  margin-top: 2px;
+  flex-shrink: 0;
+}
+
+.progress-error-container {
+  padding: 20px;
+  background-color: rgba(239, 68, 68, 0.08);
+  border-bottom: 1px solid rgba(239, 68, 68, 0.25);
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+}
+
+/* Reduced Motion Preferences */
+@media (prefers-reduced-motion: reduce) {
+  .progress-fill,
+  .stage-item,
+  .comparison-progress-card {
+    transition: none !important;
+  }
+  .scanline-sweep,
+  .pulse-indicator,
+  .spin-icon {
+    animation: none !important;
+  }
+}
+
 /* Responsive adjustments */
 @media (max-width: 768px) {
   .app-sidebar {

@@ -1,4 +1,4 @@
-import React, { useState } from 'react';
+import React, { useState, useRef, useEffect } from 'react';
 import {
   ArrowRightLeft,
   RotateCcw,
@@ -10,8 +10,10 @@ import type {
   UploadedImageSlot,
   ComparisonResponse,
   ComparisonHistoryEntry,
+  ComparisonProcessingState,
 } from '../../types';
 import { ImageUploadCard } from './ImageUploadCard';
+import { ComparisonProgress } from './ComparisonProgress';
 import { ResultPanel } from './ResultPanel';
 import { compareImagesApi } from '../../services/api';
 
@@ -48,9 +50,24 @@ export const ComparisonWorkspace: React.FC<ComparisonWorkspaceProps> = ({
     validationError: null,
   });
 
-  const [isComparing, setIsComparing] = useState(false);
+  // State machine for comparison lifecycle
+  const [comparisonState, setComparisonState] =
+    useState<ComparisonProcessingState>('idle');
+  const [progressPercent, setProgressPercent] = useState<number>(0);
+  const [currentStageIndex, setCurrentStageIndex] = useState<number>(0);
+  const [comparisonError, setComparisonError] = useState<string | null>(null);
   const [comparisonResult, setComparisonResult] =
     useState<ComparisonResponse | null>(null);
+
+  const currentRequestIdRef = useRef<number>(0);
+  const abortControllerRef = useRef<AbortController | null>(null);
+  const progressTimerRef = useRef<number | null>(null);
+  const completionTimerRef = useRef<number | null>(null);
+
+  const isComparing =
+    comparisonState === 'validating' ||
+    comparisonState === 'processing' ||
+    comparisonState === 'completing';
 
   // Both images must be loaded, have valid diagnostics, and not have pending validation
   const canCompare =
@@ -58,17 +75,40 @@ export const ComparisonWorkspace: React.FC<ComparisonWorkspaceProps> = ({
     Boolean(slotB.file && slotB.diagnostics && !slotB.isValidating && !slotB.validationError) &&
     !isComparing;
 
+  // Cleanup timers and abort controllers on unmount
+  useEffect(() => {
+    return () => {
+      if (progressTimerRef.current) clearInterval(progressTimerRef.current);
+      if (completionTimerRef.current) clearTimeout(completionTimerRef.current);
+      abortControllerRef.current?.abort();
+    };
+  }, []);
+
+  const cancelActiveComparison = () => {
+    currentRequestIdRef.current += 1;
+    if (progressTimerRef.current) clearInterval(progressTimerRef.current);
+    if (completionTimerRef.current) clearTimeout(completionTimerRef.current);
+    abortControllerRef.current?.abort();
+    setComparisonState('idle');
+    setProgressPercent(0);
+    setCurrentStageIndex(0);
+    setComparisonError(null);
+  };
+
   const handleUpdateSlotA = (updated: Partial<UploadedImageSlot>) => {
+    cancelActiveComparison();
     setSlotA((prev) => ({ ...prev, ...updated }));
     setComparisonResult(null);
   };
 
   const handleUpdateSlotB = (updated: Partial<UploadedImageSlot>) => {
+    cancelActiveComparison();
     setSlotB((prev) => ({ ...prev, ...updated }));
     setComparisonResult(null);
   };
 
   const handleClearSlotA = () => {
+    cancelActiveComparison();
     if (slotA.previewUrl) URL.revokeObjectURL(slotA.previewUrl);
     setSlotA({
       id: 'probe',
@@ -83,6 +123,7 @@ export const ComparisonWorkspace: React.FC<ComparisonWorkspaceProps> = ({
   };
 
   const handleClearSlotB = () => {
+    cancelActiveComparison();
     if (slotB.previewUrl) URL.revokeObjectURL(slotB.previewUrl);
     setSlotB({
       id: 'reference',
@@ -97,6 +138,8 @@ export const ComparisonWorkspace: React.FC<ComparisonWorkspaceProps> = ({
   };
 
   const handleSwapSlots = () => {
+    if (isComparing) return;
+    cancelActiveComparison();
     const tempA = { ...slotA, label: 'IMAGE A (PROBE / QUERY)', id: 'probe' as const };
     const tempB = { ...slotB, label: 'IMAGE B (REFERENCE / GALLERY)', id: 'reference' as const };
     setSlotA(tempB);
@@ -109,6 +152,7 @@ export const ComparisonWorkspace: React.FC<ComparisonWorkspaceProps> = ({
   };
 
   const handleResetWorkspace = () => {
+    cancelActiveComparison();
     handleClearSlotA();
     handleClearSlotB();
     setComparisonResult(null);
@@ -118,54 +162,126 @@ export const ComparisonWorkspace: React.FC<ComparisonWorkspaceProps> = ({
     });
   };
 
+  const handleDismissProgress = () => {
+    cancelActiveComparison();
+  };
+
   const handleExecuteComparison = async () => {
-    if (!slotA.file || !slotB.file) return;
+    if (!slotA.file || !slotB.file || isComparing) return;
 
-    setIsComparing(true);
-    try {
-      const response = await compareImagesApi(slotA.file, slotB.file);
-      setComparisonResult(response);
+    // Increment request ID and cancel any existing timer/request
+    const thisRequestId = ++currentRequestIdRef.current;
+    if (progressTimerRef.current) clearInterval(progressTimerRef.current);
+    if (completionTimerRef.current) clearTimeout(completionTimerRef.current);
+    abortControllerRef.current?.abort();
+    const abortController = new AbortController();
+    abortControllerRef.current = abortController;
 
-      // Record metadata-only history entry
-      const historyEntry: ComparisonHistoryEntry = {
-        id: `eval-${Date.now()}-${Math.random().toString(36).substring(2, 7)}`,
-        timestamp: response.timestamp,
-        imageAName: response.image_a_diagnostics.filename,
-        imageBName: response.image_b_diagnostics.filename,
-        hashAPrefix: response.image_a_diagnostics.sha256_hash,
-        hashBPrefix: response.image_b_diagnostics.sha256_hash,
-        dimensionsA: `${response.image_a_diagnostics.width}x${response.image_a_diagnostics.height}`,
-        dimensionsB: `${response.image_b_diagnostics.width}x${response.image_b_diagnostics.height}`,
-        engineName: response.engine.name,
-        statusNotice: response.status,
-        rawCosineScore: response.raw_cosine_similarity,
-        displayScore: response.transformed_display_score,
-        isMatch: response.is_match,
-      };
-      onAddHistory(historyEntry);
+    // Immediately enter processing state and hide previous result
+    setComparisonResult(null);
+    setComparisonError(null);
+    setComparisonState('processing');
+    setProgressPercent(6);
+    setCurrentStageIndex(0);
 
-      const cosineFormatted =
-        response.raw_cosine_similarity !== null && response.raw_cosine_similarity !== undefined
-          ? (response.raw_cosine_similarity >= 0 ? '+' : '') + response.raw_cosine_similarity.toFixed(4)
-          : 'N/A';
+    const startTime = Date.now();
 
-      onShowToast({
-        type: 'success',
-        title: 'Facial Evaluation Complete',
-        message: `Embeddings extracted via ${response.engine.name}. Raw Cosine: ${cosineFormatted}`,
+    // Staged progress ticker advancing smoothly towards ~88% while waiting for backend
+    progressTimerRef.current = window.setInterval(() => {
+      if (currentRequestIdRef.current !== thisRequestId) return;
+      const elapsed = Date.now() - startTime;
+
+      setProgressPercent((prev) => {
+        if (prev >= 88) return 88;
+        const delta = Math.max(1, Math.round((88 - prev) * 0.15));
+        return Math.min(88, prev + delta);
       });
+
+      setCurrentStageIndex(() => {
+        if (elapsed < 150) return 0;
+        if (elapsed < 350) return 1;
+        if (elapsed < 600) return 2;
+        if (elapsed < 850) return 3;
+        if (elapsed < 1100) return 4;
+        return 5;
+      });
+    }, 80);
+
+    try {
+      const response = await compareImagesApi(slotA.file, slotB.file, abortController.signal);
+
+      // Guard against stale or cancelled requests
+      if (currentRequestIdRef.current !== thisRequestId) return;
+      if (progressTimerRef.current) clearInterval(progressTimerRef.current);
+
+      // Validate response structure before accepting
+      if (
+        !response ||
+        !response.engine ||
+        response.raw_cosine_similarity === null ||
+        response.raw_cosine_similarity === undefined
+      ) {
+        throw new Error('Received malformed response payload from evaluation engine.');
+      }
+
+      // Enter completing state: jump visual progress to 100% and activate final stage
+      setComparisonState('completing');
+      setProgressPercent(100);
+      setCurrentStageIndex(5);
+
+      // Brief accessible completion delay before revealing actual ResultPanel
+      completionTimerRef.current = window.setTimeout(() => {
+        if (currentRequestIdRef.current !== thisRequestId) return;
+
+        setComparisonResult(response);
+        setComparisonState('success');
+
+        // Record metadata-only history entry
+        const historyEntry: ComparisonHistoryEntry = {
+          id: `eval-${Date.now()}-${Math.random().toString(36).substring(2, 7)}`,
+          timestamp: response.timestamp,
+          imageAName: response.image_a_diagnostics.filename,
+          imageBName: response.image_b_diagnostics.filename,
+          hashAPrefix: response.image_a_diagnostics.sha256_hash,
+          hashBPrefix: response.image_b_diagnostics.sha256_hash,
+          dimensionsA: `${response.image_a_diagnostics.width}x${response.image_a_diagnostics.height}`,
+          dimensionsB: `${response.image_b_diagnostics.width}x${response.image_b_diagnostics.height}`,
+          engineName: response.engine.name,
+          statusNotice: response.status,
+          rawCosineScore: response.raw_cosine_similarity,
+          displayScore: response.transformed_display_score,
+          isMatch: response.is_match,
+        };
+        onAddHistory(historyEntry);
+
+        const cosineFormatted =
+          response.raw_cosine_similarity !== null && response.raw_cosine_similarity !== undefined
+            ? (response.raw_cosine_similarity >= 0 ? '+' : '') + response.raw_cosine_similarity.toFixed(4)
+            : 'N/A';
+
+        onShowToast({
+          type: 'success',
+          title: 'Facial Evaluation Complete',
+          message: `Embeddings extracted via ${response.engine.name}. Raw Cosine: ${cosineFormatted}`,
+        });
+      }, 350);
     } catch (err: unknown) {
+      if (currentRequestIdRef.current !== thisRequestId) return;
+      if (progressTimerRef.current) clearInterval(progressTimerRef.current);
+      if (err instanceof Error && err.name === 'AbortError') return;
+
       const errMsg =
         err instanceof Error
           ? err.message
           : 'Encountered unexpected error during image comparison.';
+      setComparisonError(errMsg);
+      setComparisonState('error');
+
       onShowToast({
         type: 'error',
         title: 'Comparison Rejected',
         message: errMsg,
       });
-    } finally {
-      setIsComparing(false);
     }
   };
 
@@ -197,6 +313,7 @@ export const ComparisonWorkspace: React.FC<ComparisonWorkspaceProps> = ({
             <>
               <button
                 onClick={handleSwapSlots}
+                disabled={isComparing}
                 className="btn btn-secondary btn-sm"
                 title="Swap Image A and Image B slots"
               >
@@ -205,6 +322,7 @@ export const ComparisonWorkspace: React.FC<ComparisonWorkspaceProps> = ({
               </button>
               <button
                 onClick={handleResetWorkspace}
+                disabled={isComparing}
                 className="btn btn-secondary btn-sm"
                 title="Reset workspace"
               >
@@ -223,12 +341,14 @@ export const ComparisonWorkspace: React.FC<ComparisonWorkspaceProps> = ({
           onUpdateSlot={handleUpdateSlotA}
           onClearSlot={handleClearSlotA}
           otherSlotFileName={slotB.file?.name}
+          disabled={isComparing}
         />
         <ImageUploadCard
           slot={slotB}
           onUpdateSlot={handleUpdateSlotB}
           onClearSlot={handleClearSlotB}
           otherSlotFileName={slotA.file?.name}
+          disabled={isComparing}
         />
       </div>
 
@@ -256,7 +376,7 @@ export const ComparisonWorkspace: React.FC<ComparisonWorkspaceProps> = ({
           </button>
         </div>
 
-        {!canCompare && (
+        {!canCompare && !isComparing && (
           <div
             style={{
               fontSize: '12px',
@@ -277,11 +397,26 @@ export const ComparisonWorkspace: React.FC<ComparisonWorkspaceProps> = ({
         )}
       </div>
 
-      {/* Results Area */}
-      {comparisonResult && (
+      {/* Animated Comparison Progress View (Active or Error) */}
+      {comparisonState !== 'idle' && comparisonState !== 'success' && (
+        <ComparisonProgress
+          state={comparisonState}
+          progressPercent={progressPercent}
+          currentStageIndex={currentStageIndex}
+          errorMessage={comparisonError}
+          onRetry={handleExecuteComparison}
+          onDismiss={handleDismissProgress}
+        />
+      )}
+
+      {/* Results Area (Revealed ONLY on validated success) */}
+      {comparisonState === 'success' && comparisonResult && (
         <ResultPanel
           result={comparisonResult}
-          onClear={() => setComparisonResult(null)}
+          onClear={() => {
+            setComparisonResult(null);
+            setComparisonState('idle');
+          }}
         />
       )}
     </div>

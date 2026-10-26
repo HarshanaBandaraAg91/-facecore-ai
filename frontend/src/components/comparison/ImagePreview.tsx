@@ -8,6 +8,7 @@ interface ImagePreviewProps {
   onReplace: () => void;
   onRemove: () => void;
   slotLabel: string;
+  disabled?: boolean;
 }
 
 export const ImagePreview: React.FC<ImagePreviewProps> = ({
@@ -16,6 +17,7 @@ export const ImagePreview: React.FC<ImagePreviewProps> = ({
   onReplace,
   onRemove,
   slotLabel,
+  disabled = false,
 }) => {
   return (
     <div className="preview-container">
@@ -73,6 +75,7 @@ export const ImagePreview: React.FC<ImagePreviewProps> = ({
       <div className="preview-controls">
         <button
           onClick={onReplace}
+          disabled={disabled}
           className="btn btn-secondary btn-sm"
           title="Choose a different image file"
           aria-label="Replace image"
@@ -82,6 +85,7 @@ export const ImagePreview: React.FC<ImagePreviewProps> = ({
         </button>
         <button
           onClick={onRemove}
+          disabled={disabled}
           className="btn btn-danger btn-sm"
           title="Remove current image"
           aria-label="Remove image"

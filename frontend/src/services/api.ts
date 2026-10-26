@@ -95,7 +95,8 @@ export async function validateImageApi(file: File): Promise<ImageValidationRespo
  */
 export async function compareImagesApi(
   fileA: File,
-  fileB: File
+  fileB: File,
+  signal?: AbortSignal
 ): Promise<ComparisonResponse> {
   try {
     const formData = new FormData();
@@ -105,6 +106,7 @@ export async function compareImagesApi(
     const res = await fetch(`${API_BASE_URL}/api/compare`, {
       method: 'POST',
       body: formData,
+      signal,
     });
 
     if (!res.ok) {
@@ -117,6 +119,9 @@ export async function compareImagesApi(
 
     return await res.json();
   } catch (err: unknown) {
+    if (err instanceof Error && err.name === 'AbortError') {
+      throw err;
+    }
     if (err instanceof ApiError) throw err;
     throw new ApiError('Failed to execute comparison request.');
   }
