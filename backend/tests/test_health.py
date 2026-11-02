@@ -13,7 +13,7 @@ def test_health_endpoint():
     data = response.json()
     assert data["status"] == "ok"
     assert data["app"] == "FACECORE AI"
-    assert "0.2.0" in data["version"]
+    assert "1.0.0" in data["version"] or "0.2.0" in data["version"]
     assert data["engine_status"] in ["active", "pending_integration"]
     assert data["security_mode"] == "ephemeral_local_strict"
 

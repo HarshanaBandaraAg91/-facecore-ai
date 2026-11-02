@@ -81,8 +81,8 @@ def test_validate_corrupt_payload():
 
 def test_validate_oversized_payload():
     """Verify file exceeding size limit is rejected."""
-    # Simulate oversized payload larger than 10MB
-    oversized = b"\xFF\xD8\xFF" + b"\x00" * (11 * 1024 * 1024)
+    # Simulate oversized payload larger than 15MB (production limit)
+    oversized = b"\xFF\xD8\xFF" + b"\x00" * (16 * 1024 * 1024)
     files = {"file": ("huge.jpg", oversized, "image/jpeg")}
     response = client.post("/api/validate-image", files=files)
     assert response.status_code == 200

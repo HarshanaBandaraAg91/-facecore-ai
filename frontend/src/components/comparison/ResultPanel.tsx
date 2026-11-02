@@ -34,8 +34,10 @@ export const ResultPanel: React.FC<ResultPanelProps> = ({ result }) => {
   const hasScore = result.raw_cosine_similarity !== null && result.raw_cosine_similarity !== undefined;
   const rawScore = result.raw_cosine_similarity ?? result.similarity_score;
   const displayScore = result.transformed_display_score;
-  const isMatch = result.is_match;
-  const threshold = result.provisional_threshold ?? 0.363;
+  const threshold = result.threshold_used ?? result.provisional_threshold ?? 0.3132;
+  const profile = result.threshold_profile || 'balanced';
+  const decision = result.decision || (rawScore !== null && rawScore >= threshold ? 'MATCH' : 'NO_MATCH');
+  const isMatch = decision === 'MATCH';
 
   return (
     <div className="card results-card" style={{ marginTop: '0', marginBottom: '24px' }}>
@@ -65,9 +67,9 @@ export const ResultPanel: React.FC<ResultPanelProps> = ({ result }) => {
             role="status"
           >
             {isMatch ? (
-              <CheckCircle2 size={24} style={{ flexShrink: 0, marginTop: '2px' }} />
+              <CheckCircle2 size={24} style={{ flexShrink: 0, marginTop: '2px', color: 'var(--emerald-primary)' }} />
             ) : (
-              <AlertTriangle size={24} style={{ flexShrink: 0, marginTop: '2px' }} />
+              <AlertTriangle size={24} style={{ flexShrink: 0, marginTop: '2px', color: 'var(--amber-primary)' }} />
             )}
             <div style={{ flex: 1 }}>
               <div
@@ -80,18 +82,43 @@ export const ResultPanel: React.FC<ResultPanelProps> = ({ result }) => {
                   marginBottom: '4px',
                 }}
               >
-                <div style={{ fontWeight: 700, fontSize: '14px' }}>
-                  {isMatch
-                    ? 'PROVISIONAL MATCH (EXPERIMENTAL BASELINE)'
-                    : 'PROVISIONAL NON-MATCH (BELOW THRESHOLD)'}
-                </div>
-                <span className="badge-tag amber" style={{ fontSize: '10px' }}>
-                  UNCALIBRATED THRESHOLD (&tau; = {threshold})
-                </span>
+                {!result.threshold_profile ? (
+                  <>
+                    <div style={{ fontWeight: 700, fontSize: '14px' }}>
+                      {isMatch
+                        ? 'PROVISIONAL MATCH (EXPERIMENTAL BASELINE)'
+                        : 'PROVISIONAL NON-MATCH (BELOW THRESHOLD)'}
+                    </div>
+                    <span className="badge-tag amber" style={{ fontSize: '10px' }}>
+                      UNCALIBRATED THRESHOLD (&tau; = {threshold})
+                    </span>
+                  </>
+                ) : (
+                  <>
+                    <div style={{ fontWeight: 700, fontSize: '15px' }}>
+                      {isMatch
+                        ? 'VERIFIED MATCH (ABOVE THRESHOLD)'
+                        : 'VERIFIED NON-MATCH (BELOW THRESHOLD)'}
+                    </div>
+                    <div style={{ display: 'flex', gap: '6px' }}>
+                      <span className={`badge-tag ${isMatch ? 'emerald' : 'amber'}`} style={{ fontSize: '10px', textTransform: 'uppercase' }}>
+                        {decision}
+                      </span>
+                      <span className="badge-tag slate" style={{ fontSize: '10px', textTransform: 'capitalize' }}>
+                        {profile.replace('_', ' ')} (&tau; = {threshold.toFixed(4)})
+                      </span>
+                    </div>
+                  </>
+                )}
               </div>
               <p style={{ fontSize: '13px', lineHeight: '1.5' }}>
                 {result.interpretation_notice}
               </p>
+              {result.statistical_confidence_notice && (
+                <p style={{ fontSize: '11px', color: 'var(--text-dim)', marginTop: '4px', fontFamily: 'var(--font-mono)' }}>
+                  {result.statistical_confidence_notice}
+                </p>
+              )}
             </div>
           </div>
         ) : (
@@ -109,6 +136,72 @@ export const ResultPanel: React.FC<ResultPanelProps> = ({ result }) => {
                 {result.interpretation_notice}
               </p>
             </div>
+          </div>
+        )}
+
+        {/* Ambiguous Zone Warning [0.28, 0.35] */}
+        {hasScore && rawScore !== null && rawScore >= 0.28 && rawScore <= 0.35 && (
+          <div
+            style={{
+              padding: '12px 16px',
+              backgroundColor: 'rgba(234, 179, 8, 0.1)',
+              border: '1px solid rgba(234, 179, 8, 0.4)',
+              borderRadius: '8px',
+              marginBottom: '20px',
+              display: 'flex',
+              alignItems: 'flex-start',
+              gap: '10px',
+            }}
+            role="status"
+          >
+            <AlertTriangle size={18} color="#eab308" style={{ flexShrink: 0, marginTop: '2px' }} />
+            <div>
+              <div style={{ fontWeight: 700, fontSize: '13px', color: '#eab308', marginBottom: '2px' }}>
+                AMBIGUOUS SIMILARITY ZONE [0.28 &ndash; 0.35]
+              </div>
+              <p style={{ fontSize: '12px', color: 'var(--text-main)', lineHeight: '1.5', margin: 0 }}>
+                The raw cosine similarity ({rawScore >= 0 ? `+${rawScore.toFixed(4)}` : rawScore.toFixed(4)}) falls directly within the critical margin of statistical overlap where genuine and impostor score distributions intersect. Manual human review is strongly advised before relying on this classification.
+              </p>
+            </div>
+          </div>
+        )}
+
+        {/* Input Quality Advisories Banner (if any) */}
+        {((result.image_a_diagnostics.warnings?.length ?? 0) > 0 || (result.image_b_diagnostics.warnings?.length ?? 0) > 0) && (
+          <div
+            style={{
+              padding: '12px 16px',
+              backgroundColor: 'var(--amber-subtle)',
+              border: '1px solid var(--amber-border)',
+              borderRadius: '8px',
+              marginBottom: '20px',
+            }}
+          >
+            <div
+              style={{
+                display: 'flex',
+                alignItems: 'center',
+                gap: '8px',
+                color: 'var(--amber-primary)',
+                fontWeight: 600,
+                fontSize: '13px',
+                marginBottom: '6px',
+              }}
+            >
+              <AlertTriangle size={15} />
+              <span>Input Quality Advisories & Verification Score Impact</span>
+            </div>
+            <ul style={{ margin: 0, paddingLeft: '20px', fontSize: '12px', color: 'var(--text-main)', lineHeight: '1.6' }}>
+              {result.image_a_diagnostics.warnings?.map((w, idx) => (
+                <li key={`a-${idx}`}><strong>Image A:</strong> {w}</li>
+              ))}
+              {result.image_b_diagnostics.warnings?.map((w, idx) => (
+                <li key={`b-${idx}`}><strong>Image B:</strong> {w}</li>
+              ))}
+            </ul>
+            <p style={{ fontSize: '11px', color: 'var(--text-muted)', marginTop: '8px' }}>
+              Advisory: Low face resolution (&lt;48px width) induces genuine score attenuation, which elevates false rejection risk.
+            </p>
           </div>
         )}
 
@@ -209,7 +302,7 @@ export const ResultPanel: React.FC<ResultPanelProps> = ({ result }) => {
           {/* Inference Latency */}
           {result.inference_latency_ms !== null && result.inference_latency_ms !== undefined && (
             <div className="stat-metric-box">
-              <span className="stat-label">Inference Execution</span>
+              <span className="stat-label">Inference Latency</span>
               <div
                 style={{
                   display: 'flex',
@@ -224,7 +317,9 @@ export const ResultPanel: React.FC<ResultPanelProps> = ({ result }) => {
                 </span>
               </div>
               <span style={{ fontSize: '11px', color: 'var(--text-muted)' }}>
-                Local multi-threaded CPU pipeline
+                {result.detection_latency_ms !== undefined && result.embedding_latency_ms !== undefined
+                  ? `Detect: ${result.detection_latency_ms?.toFixed(1)}ms | Embed: ${result.embedding_latency_ms?.toFixed(1)}ms`
+                  : 'Multi-threaded CPU pipeline'}
               </span>
             </div>
           )}

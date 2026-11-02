@@ -61,10 +61,19 @@ export const QualityDiagnostics: React.FC<QualityDiagnosticsProps> = ({
         </span>
         <span
           className={`badge-tag ${
-            diagnostics.passes_quality_check ? 'emerald' : 'amber'
+            (diagnostics.face_count ?? 0) === 0
+              ? 'crimson'
+              : diagnostics.passes_quality_check
+              ? 'emerald'
+              : 'amber'
           }`}
+          style={(diagnostics.face_count ?? 0) === 0 ? { backgroundColor: 'rgba(239, 68, 68, 0.15)', color: 'var(--crimson-primary)', borderColor: 'var(--crimson-border)' } : undefined}
         >
-          {diagnostics.passes_quality_check ? (
+          {(diagnostics.face_count ?? 0) === 0 ? (
+            <>
+              <AlertTriangle size={11} /> No Face Localized
+            </>
+          ) : diagnostics.passes_quality_check ? (
             <>
               <CheckCircle2 size={11} /> Pass
             </>
@@ -85,11 +94,11 @@ export const QualityDiagnostics: React.FC<QualityDiagnosticsProps> = ({
           </tr>
         </thead>
         <tbody>
-          {diagnostics.face_detected !== undefined && (
+          {diagnostics.face_count !== undefined && (
             <tr>
               <td>
                 <div style={{ display: 'flex', alignItems: 'center', gap: '5px' }}>
-                  <UserCheck size={12} color="var(--emerald-primary)" />
+                  <UserCheck size={12} color={(diagnostics.face_count ?? 0) > 0 ? "var(--emerald-primary)" : "var(--crimson-primary)"} />
                   <span>Face Localization</span>
                 </div>
               </td>
@@ -97,19 +106,66 @@ export const QualityDiagnostics: React.FC<QualityDiagnosticsProps> = ({
                 <span
                   className="mono-text"
                   style={{
-                    color: diagnostics.face_detected
-                      ? 'var(--emerald-primary)'
-                      : 'var(--crimson-primary)',
+                    color:
+                      diagnostics.face_count === 1
+                        ? 'var(--emerald-primary)'
+                        : diagnostics.face_count > 1
+                        ? 'var(--amber-primary)'
+                        : 'var(--crimson-primary)',
+                    fontWeight: 600,
                   }}
                 >
-                  {diagnostics.face_detected
+                  {diagnostics.face_count === 1
                     ? `1 Face (${diagnostics.face_confidence ? (diagnostics.face_confidence * 100).toFixed(1) : '100'}% conf)`
-                    : `${diagnostics.face_count ?? 0} Faces Detected`}
+                    : diagnostics.face_count > 1
+                    ? `${diagnostics.face_count} Faces Detected ${
+                        diagnostics.selected_face_index !== null && diagnostics.selected_face_index !== undefined
+                          ? `(Face #${diagnostics.selected_face_index + 1} Active)`
+                          : '(Selection Required)'
+                      }`
+                    : '0 Faces Detected'}
                 </span>
               </td>
-              <td style={{ color: 'var(--text-dim)' }}>Exactly 1 Face Required</td>
+              <td style={{ color: 'var(--text-dim)' }}>
+                {diagnostics.face_count > 1 ? 'Select 1 Face for Comparison' : 'Exactly 1 Face Required'}
+              </td>
             </tr>
           )}
+
+          {diagnostics.face_bounding_box && (
+            <tr>
+              <td>
+                <div style={{ display: 'flex', alignItems: 'center', gap: '5px' }}>
+                  <Maximize2 size={12} color="var(--text-muted)" />
+                  <span>Face Bounding Box</span>
+                </div>
+              </td>
+              <td>
+                <span className="mono-text" style={{ color: 'var(--text-bright)' }}>
+                  [{diagnostics.face_bounding_box.join(', ')}] px
+                </span>
+              </td>
+              <td style={{ color: 'var(--text-dim)' }}>&ge; 16 &times; 16 px</td>
+            </tr>
+          )}
+
+          {diagnostics.crop_bounding_box && (
+            <tr>
+              <td>
+                <div style={{ display: 'flex', alignItems: 'center', gap: '5px' }}>
+                  <Maximize2 size={12} color="var(--crimson-primary)" />
+                  <span>Manual Crop Framing</span>
+                </div>
+              </td>
+              <td>
+                <span className="mono-text" style={{ color: 'var(--crimson-primary)' }}>
+                  [{diagnostics.crop_bounding_box.join(', ')}] px
+                </span>
+              </td>
+              <td style={{ color: 'var(--text-dim)' }}>User Region Constraint</td>
+            </tr>
+          )}
+
           <tr>
             <td>Container / Color Space</td>
             <td>

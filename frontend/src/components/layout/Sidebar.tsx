@@ -1,5 +1,6 @@
 import React from 'react';
 import {
+  Activity,
   ScanFace,
   FlaskConical,
   BarChart3,
@@ -25,6 +26,7 @@ export const Sidebar: React.FC<SidebarProps> = ({
   mobileOpen,
 }) => {
   const navItems = [
+    { id: 'dashboard' as NavTab, label: 'Audit Dashboard', icon: Activity },
     { id: 'compare' as NavTab, label: 'Face Comparison', icon: ScanFace },
     { id: 'testlab' as NavTab, label: 'Test Lab', icon: FlaskConical },
     { id: 'benchmarks' as NavTab, label: 'Model Benchmarks', icon: BarChart3 },

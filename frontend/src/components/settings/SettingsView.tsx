@@ -8,6 +8,7 @@ import {
   AlertTriangle,
   Lock,
   Cpu,
+  Layers,
 } from 'lucide-react';
 import type { Theme, HealthResponse } from '../../types';
 import { API_BASE_URL, fetchHealth } from '../../services/api';
@@ -297,6 +298,82 @@ export const SettingsView: React.FC<SettingsViewProps> = ({
                 {testResult}
               </div>
             )}
+          </div>
+        </div>
+      </div>
+
+      {/* Production Operational Policy & Quality Boundaries */}
+      <div className="card" style={{ marginBottom: '24px' }}>
+        <div className="card-header">
+          <div className="card-title">
+            <Layers size={16} color="var(--crimson-primary)" />
+            <span>Production Operational Policy & Calibrated Profiles (Step 10)</span>
+          </div>
+          <span className="badge-tag emerald">Engine Governance</span>
+        </div>
+        <div className="card-body">
+          <div
+            style={{
+              display: 'grid',
+              gridTemplateColumns: 'repeat(auto-fit, minmax(280px, 1fr))',
+              gap: '16px',
+              marginBottom: '16px',
+            }}
+          >
+            <div
+              style={{
+                padding: '14px',
+                backgroundColor: 'var(--bg-input)',
+                borderRadius: '8px',
+                border: '1px solid var(--border-subtle)',
+              }}
+            >
+              <div style={{ color: 'var(--text-bright)', fontWeight: 600, fontSize: '13px', marginBottom: '6px' }}>
+                Image Ingestion Boundaries
+              </div>
+              <ul style={{ fontSize: '12px', color: 'var(--text-muted)', lineHeight: '1.6', paddingLeft: '18px' }}>
+                <li><strong>Hard Floor Rejection:</strong> Images &lt; 48&times;48 px rejected with HTTP 422.</li>
+                <li><strong>Face Box Floor:</strong> Bounding box &lt; 16&times;16 px causes 100% FTA.</li>
+                <li><strong>Advisory Quality Gate:</strong> Face width &lt; 48 px triggers score attenuation warning.</li>
+                <li><strong>Safe Operating Region:</strong> Face width &ge; 128 px recommended.</li>
+              </ul>
+            </div>
+
+            <div
+              style={{
+                padding: '14px',
+                backgroundColor: 'var(--bg-input)',
+                borderRadius: '8px',
+                border: '1px solid var(--border-subtle)',
+              }}
+            >
+              <div style={{ color: 'var(--text-bright)', fontWeight: 600, fontSize: '13px', marginBottom: '6px' }}>
+                Calibrated Threshold Profiles
+              </div>
+              <ul style={{ fontSize: '12px', color: 'var(--text-muted)', lineHeight: '1.6', paddingLeft: '18px' }}>
+                <li><strong>High Security (&tau;=0.3600):</strong> Target FAR &le; 0.1% (3/3,000 false accepts).</li>
+                <li><strong>Balanced (&tau;=0.3132):</strong> LFW Native EER calibration (FAR &approx; 0.5%).</li>
+                <li><strong>High Convenience (&tau;=0.2500):</strong> Minimized false rejection under adverse conditions.</li>
+                <li><strong>Custom:</strong> Manual operating threshold for specialized research.</li>
+              </ul>
+            </div>
+
+            <div
+              style={{
+                padding: '14px',
+                backgroundColor: 'var(--bg-input)',
+                borderRadius: '8px',
+                border: '1px solid var(--border-subtle)',
+              }}
+            >
+              <div style={{ color: 'var(--text-bright)', fontWeight: 600, fontSize: '13px', marginBottom: '6px' }}>
+                Ephemeral SQLite Audit Trail
+              </div>
+              <p style={{ fontSize: '12px', color: 'var(--text-muted)', lineHeight: '1.6' }}>
+                SQLite (WAL mode) records only non-biometric technical telemetry: SHA-256 prefixes, scalar similarity scores,
+                latencies, and quality flags. Uploaded image payloads and 128-d neural embeddings are NEVER persisted to disk.
+              </p>
+            </div>
           </div>
         </div>
       </div>

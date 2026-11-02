@@ -6,7 +6,12 @@ import numpy as np
 from PIL import Image
 
 from app.config import settings
-from app.models.schemas import ImageQualityDiagnostics
+from app.models.schemas import ImageQualityDiagnostics, DetectedFaceSummary
+from app.services.face_detector import (
+    shared_face_detector,
+    InvalidCropCoordinatesError,
+    DetectionResult,
+)
 
 
 def detect_magic_signature(data: bytes) -> Optional[str]:
@@ -76,7 +81,8 @@ def compute_sharpness_estimate(arr: np.ndarray) -> float:
 
 def validate_image_bytes(
     data: bytes,
-    filename: str = "upload.img"
+    filename: str = "upload.img",
+    crop_box: Optional[List[int]] = None,
 ) -> Tuple[bool, Optional[str], Optional[ImageQualityDiagnostics]]:
     """Strictly validate image data, magic bytes, dimensions, and extract diagnostics."""
     if not data or len(data) == 0:
@@ -187,7 +193,55 @@ def validate_image_bytes(
             if sharpness_score > 0 and sharpness_score < 25.0:
                 warnings.append("Soft focus: Estimated sharpness is below typical verification baseline.")
 
-            passes_quality = len(warnings) == 0 or (min_dim >= 120 and contrast_std >= 15.0)
+            # Run unified face detection via shared detector service
+            face_detected = False
+            face_count = 0
+            face_confidence: Optional[float] = None
+            face_bounding_box: Optional[List[int]] = None
+            detected_faces: List[DetectedFaceSummary] = []
+            applied_crop: Optional[List[int]] = None
+
+            if shared_face_detector.is_ready:
+                try:
+                    det_result = shared_face_detector.detect_faces(data, crop_box=crop_box)
+                    face_count = det_result.face_count
+                    face_detected = face_count > 0
+                    applied_crop = det_result.crop_box
+                    if det_result.primary_face:
+                        face_confidence = det_result.primary_face.confidence
+                        face_bounding_box = det_result.primary_face.box
+
+                    detected_faces = [
+                        DetectedFaceSummary(
+                            index=f.index,
+                            box=f.box,
+                            confidence=f.confidence,
+                            landmarks=f.landmarks,
+                            quality_advisories=f.quality_advisories,
+                        )
+                        for f in det_result.faces
+                    ]
+
+                    for w in det_result.warnings:
+                        if w not in warnings:
+                            warnings.append(w)
+                    if det_result.primary_face:
+                        for adv in det_result.primary_face.quality_advisories:
+                            if adv not in warnings:
+                                warnings.append(adv)
+                except InvalidCropCoordinatesError as exc:
+                    return False, f"Invalid crop coordinates: {str(exc)}", None
+                except Exception as exc:
+                    warnings.append(f"Face detector warning: {str(exc)}")
+            else:
+                warnings.append("Face detection service is currently offline or weights unmounted.")
+
+            # Do not report PASS if face localization has failed or 0 faces were located
+            passes_quality = (
+                face_detected
+                and (min_dim >= 120 or crop_box is not None)
+                and (contrast_std >= 15.0)
+            )
 
             diagnostics = ImageQualityDiagnostics(
                 filename=filename,
@@ -202,6 +256,12 @@ def validate_image_bytes(
                 contrast_std=round(contrast_std, 2),
                 brightness_mean=round(mean_brightness, 2),
                 resolution_category=res_cat,
+                face_detected=face_detected,
+                face_count=face_count,
+                face_confidence=face_confidence,
+                face_bounding_box=face_bounding_box,
+                detected_faces=detected_faces,
+                crop_bounding_box=applied_crop,
                 passes_quality_check=passes_quality,
                 warnings=warnings,
             )
@@ -210,3 +270,4 @@ def validate_image_bytes(
 
     except Exception as exc:
         return False, f"Image processing failed: {str(exc)}", None
+

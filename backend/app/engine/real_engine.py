@@ -11,8 +11,9 @@ Adheres strictly to biometric research integrity:
 import os
 import time
 import math
+import threading
 from datetime import datetime, timezone
-from typing import Optional, Tuple, List, Any
+from typing import Optional, Tuple, List, Any, Dict
 import numpy as np
 import cv2
 
@@ -21,16 +22,66 @@ from app.models.schemas import (
     EngineMetadata,
     ComparisonResponse,
     ImageQualityDiagnostics,
+    DetectedFaceSummary,
 )
 from app.engine.base import FacialEmbeddingEngine
+from app.services.face_detector import (
+    shared_face_detector,
+    InvalidCropCoordinatesError,
+    DetectedFace,
+)
 
 # Default path constants for model weights
 DEFAULT_WEIGHTS_DIR = os.path.join(os.path.dirname(__file__), "..", "weights")
 DEFAULT_YUNET_PATH = os.path.join(DEFAULT_WEIGHTS_DIR, "face_detection_yunet_2023mar.onnx")
 DEFAULT_SFACE_PATH = os.path.join(DEFAULT_WEIGHTS_DIR, "face_recognition_sface_2021dec.onnx")
 
-# Published experimental baseline threshold for SFace (SphereFace2)
-PROVISIONAL_COSINE_THRESHOLD = 0.363
+# Thread safety lock protecting C++ forward pass of OpenCV FaceRecognizerSF & FaceDetectorYN
+_INFERENCE_LOCK = threading.Lock()
+
+# Named operating threshold profiles from Step 09.2 audit
+THRESHOLD_PROFILES: Dict[str, Dict[str, Any]] = {
+    "high_security": {
+        "threshold": 0.3600,
+        "name": "High Security Profile",
+        "description": "Calibrated for high security environments (Target FAR <= 0.10%). Out-of-fold TAR: 98.47%.",
+        "target_far": 0.001,
+        "tar_estimate": 0.9847,
+        "confidence_upper_bound_far": 0.00292,
+    },
+    "balanced": {
+        "threshold": 0.3132,
+        "name": "Balanced Profile",
+        "description": "Equal Error Rate (EER) crossover on canonical LFW. Accuracy: 99.50%, FAR: 0.43%, FRR: 0.57%.",
+        "target_far": 0.0043,
+        "tar_estimate": 0.9943,
+        "confidence_upper_bound_far": 0.00725,
+    },
+    "high_convenience": {
+        "threshold": 0.2500,
+        "name": "High Convenience Profile",
+        "description": "Optimized to minimize false rejections (Target FRR <= 0.10%). TAR > 99.90%.",
+        "target_far": 0.015,
+        "tar_estimate": 0.9990,
+        "confidence_upper_bound_far": 0.0198,
+    },
+}
+
+# Baseline reference threshold
+PROVISIONAL_COSINE_THRESHOLD = 0.3132
+
+
+def resolve_threshold(profile: str = "balanced", custom_threshold: Optional[float] = None) -> tuple[str, float]:
+    """Resolve threshold profile name and numerical float value."""
+    key = (profile or "balanced").lower()
+    if key == "custom" and custom_threshold is not None:
+        return ("custom", float(custom_threshold))
+    elif key in THRESHOLD_PROFILES:
+        return (key, THRESHOLD_PROFILES[key]["threshold"])
+    elif key == "custom":
+        return ("custom", THRESHOLD_PROFILES["balanced"]["threshold"])
+    return ("balanced", THRESHOLD_PROFILES["balanced"]["threshold"])
+
 
 
 class FaceEngineError(Exception):
@@ -41,6 +92,12 @@ class FaceEngineError(Exception):
 class ModelNotReadyError(FaceEngineError):
     """Raised when model weights are not loaded or missing."""
     pass
+
+
+class InvalidFaceSelectionError(FaceEngineError):
+    """Raised when selected face index is invalid or out of range."""
+    pass
+
 
 
 class NoFaceDetectedError(FaceEngineError):
@@ -205,14 +262,17 @@ class RealFacialEmbeddingEngine(FacialEmbeddingEngine):
         self,
         image_bytes: bytes,
         slot_label: str = "Image",
+        selected_face_index: Optional[int] = None,
+        crop_box: Optional[List[int]] = None,
     ) -> Tuple[np.ndarray, np.ndarray, float, List[int], int]:
-        """Decode image, enforce single face constraint, crop/align, and extract embedding.
+        """Decode image, enforce face constraint / selection, crop/align, and extract embedding.
 
         Returns: (aligned_crop, embedding, confidence, bbox, face_count)
         Raises:
             ModelNotReadyError: If models are not loaded.
             NoFaceDetectedError: If 0 faces found.
-            MultipleFacesDetectedError: If >1 faces found.
+            MultipleFacesDetectedError: If >1 faces found and none selected.
+            InvalidFaceSelectionError: If selected face index is out of bounds.
             FaceEngineError: If image cannot be decoded.
         """
         if not self.is_ready():
@@ -220,34 +280,40 @@ class RealFacialEmbeddingEngine(FacialEmbeddingEngine):
                 f"Facial embedding engine is offline: {self._init_error or 'Weights missing'}"
             )
 
+        det_result = shared_face_detector.detect_faces(image_bytes, crop_box=crop_box)
+        face_count = det_result.face_count
+
+        if face_count == 0:
+            raise NoFaceDetectedError(slot_label=slot_label)
+
+        if face_count > 1:
+            if selected_face_index is None:
+                raise MultipleFacesDetectedError(count=face_count, slot_label=slot_label)
+            if selected_face_index < 0 or selected_face_index >= face_count:
+                raise InvalidFaceSelectionError(
+                    f"Selected face index {selected_face_index} is invalid for {slot_label}. "
+                    f"Must be between 0 and {face_count - 1}."
+                )
+            face = det_result.faces[selected_face_index]
+        else:
+            face = det_result.faces[0]
+
         # Safe decode image bytes using OpenCV
         np_arr = np.frombuffer(image_bytes, np.uint8)
         bgr = cv2.imdecode(np_arr, cv2.IMREAD_COLOR)
         if bgr is None:
             raise FaceEngineError(f"Failed to decode image data for {slot_label}.")
 
-        height, width = bgr.shape[:2]
-        self.detector.setInputSize((width, height))
-        _, raw_faces = self.detector.detect(bgr)
+        # Align crop to canonical 112x112 via 5-point landmark similarity transform & extract embedding
+        with _INFERENCE_LOCK:
+            aligned_crop = self.recognizer.alignCrop(bgr, face.raw_face)
+            raw_feat = self.recognizer.feature(aligned_crop)
 
-        face_count = 0 if raw_faces is None else len(raw_faces)
-
-        if face_count == 0:
-            raise NoFaceDetectedError(slot_label=slot_label)
-
-        if face_count > 1:
-            raise MultipleFacesDetectedError(count=face_count, slot_label=slot_label)
-
-        face = raw_faces[0]
-        confidence = float(face[-1])
-        bbox = [int(face[0]), int(face[1]), int(face[2]), int(face[3])]
-
-        # Align crop to canonical 112x112 via 5-point landmark similarity transform
-        aligned_crop = self.recognizer.alignCrop(bgr, face)
-
-        # Extract 128-d embedding
-        raw_feat = self.recognizer.feature(aligned_crop)
         emb = raw_feat.flatten().astype(np.float32)
+
+        # Free temporary decoded raw image array and raw features
+        del bgr
+        del raw_feat
 
         # Strict validation
         if len(emb) != 128:
@@ -263,7 +329,7 @@ class RealFacialEmbeddingEngine(FacialEmbeddingEngine):
         # Unit normalize embedding
         unit_emb = emb / norm
 
-        return aligned_crop, unit_emb, confidence, bbox, face_count
+        return aligned_crop, unit_emb, face.confidence, face.box, face_count
 
     def extract_features(self, image_bytes: bytes) -> Optional[np.ndarray]:
         """Extract a 128-d normalized embedding vector. Returns None if face is absent or multiple."""
@@ -279,10 +345,17 @@ class RealFacialEmbeddingEngine(FacialEmbeddingEngine):
         image_b_bytes: bytes,
         diag_a: ImageQualityDiagnostics,
         diag_b: ImageQualityDiagnostics,
+        selected_face_a: Optional[int] = None,
+        selected_face_b: Optional[int] = None,
+        crop_box_a: Optional[List[int]] = None,
+        crop_box_b: Optional[List[int]] = None,
+        threshold_profile: str = "balanced",
+        custom_threshold: Optional[float] = None,
     ) -> ComparisonResponse:
-        """Run complete pairwise biometric evaluation with single-face enforcement.
+        """Run complete pairwise biometric evaluation with single-face enforcement or explicit user selection.
 
-        Computes genuine mathematical cosine similarity and populates telemetry.
+        Computes genuine mathematical cosine similarity, resolves operational threshold profile,
+        and populates structured telemetry without persisting images or embeddings.
         """
         if not self.is_ready():
             raise ModelNotReadyError(
@@ -292,24 +365,38 @@ class RealFacialEmbeddingEngine(FacialEmbeddingEngine):
         start_time = time.perf_counter()
 
         # Process Probe (Image A)
+        t_a0 = time.perf_counter()
         _, emb_a, conf_a, bbox_a, count_a = self.detect_and_extract_face(
             image_a_bytes,
-            slot_label="Image A (Probe)"
+            slot_label="Image A (Probe)",
+            selected_face_index=selected_face_a,
+            crop_box=crop_box_a,
         )
+        t_a_ms = (time.perf_counter() - t_a0) * 1000.0
+
         diag_a.face_detected = True
         diag_a.face_count = count_a
         diag_a.face_confidence = round(conf_a, 4)
         diag_a.face_bounding_box = bbox_a
+        diag_a.selected_face_index = selected_face_a if count_a > 1 else (0 if count_a == 1 else None)
+        diag_a.crop_bounding_box = crop_box_a
 
         # Process Reference (Image B)
+        t_b0 = time.perf_counter()
         _, emb_b, conf_b, bbox_b, count_b = self.detect_and_extract_face(
             image_b_bytes,
-            slot_label="Image B (Reference)"
+            slot_label="Image B (Reference)",
+            selected_face_index=selected_face_b,
+            crop_box=crop_box_b,
         )
+        t_b_ms = (time.perf_counter() - t_b0) * 1000.0
+
         diag_b.face_detected = True
         diag_b.face_count = count_b
         diag_b.face_confidence = round(conf_b, 4)
         diag_b.face_bounding_box = bbox_b
+        diag_b.selected_face_index = selected_face_b if count_b > 1 else (0 if count_b == 1 else None)
+        diag_b.crop_bounding_box = crop_box_b
 
         # Compute exact cosine similarity between normalized 128-d unit vectors
         raw_cosine = compute_cosine_similarity(emb_a, emb_b)
@@ -317,20 +404,54 @@ class RealFacialEmbeddingEngine(FacialEmbeddingEngine):
 
         elapsed_ms = (time.perf_counter() - start_time) * 1000.0
 
-        # Provisional experimental decision
-        is_match = bool(raw_cosine >= PROVISIONAL_COSINE_THRESHOLD)
+        # Resolve operational threshold profile
+        profile_key = threshold_profile.lower()
+        if profile_key == "custom" and custom_threshold is not None:
+            threshold_used = float(custom_threshold)
+            profile_name = "Custom Threshold"
+            tar_est = None
+            upper_far = None
+            threshold_desc = f"User-configured custom threshold (tau = {threshold_used:.4f})."
+        elif profile_key in THRESHOLD_PROFILES:
+            prof = THRESHOLD_PROFILES[profile_key]
+            threshold_used = prof["threshold"]
+            profile_name = prof["name"]
+            tar_est = prof["tar_estimate"]
+            upper_far = prof["confidence_upper_bound_far"]
+            threshold_desc = prof["description"]
+        else:
+            prof = THRESHOLD_PROFILES["balanced"]
+            threshold_used = prof["threshold"]
+            profile_name = prof["name"]
+            profile_key = "balanced"
+            tar_est = prof["tar_estimate"]
+            upper_far = prof["confidence_upper_bound_far"]
+            threshold_desc = prof["description"]
+
+        # Final decision
+        is_match = bool(raw_cosine >= threshold_used)
+        decision_str = "MATCH" if is_match else "NO_MATCH"
 
         threshold_notice = (
-            "EXPERIMENTAL / PROVISIONAL THRESHOLD: The decision threshold (0.363 cosine similarity) "
-            "is derived from published SFace literature on standardized benchmark datasets. It has NOT "
-            "been calibrated on your operational test distribution. A similarity score is continuous "
-            "vector proximity in hyperspherical space, never 100% proof of identity."
+            f"OPERATIONAL THRESHOLD PROFILE [{profile_name}]: Applied decision threshold "
+            f"tau = {threshold_used:.4f}. {threshold_desc} "
+            "A similarity score is continuous vector proximity in 128-d hyperspherical space, "
+            "never an absolute identity verdict."
+        )
+
+        stat_notice = (
+            f"STATISTICAL CONFIDENCE: At threshold tau = {threshold_used:.4f}, the empirical out-of-fold "
+            f"true acceptance rate is estimated at {tar_est * 100:.2f}% (on canonical LFW). "
+            f"The 95% Clopper-Pearson upper confidence bound on population FAR is <= {upper_far * 100:.3f}%."
+            if (tar_est is not None and upper_far is not None)
+            else "STATISTICAL CONFIDENCE: Custom threshold operates outside standardized calibrated benchmarks."
         )
 
         interpretation_notice = (
             f"EVALUATION COMPLETE (SFace + YuNet): Extracted 128-dimensional hyperspherical "
-            f"embeddings. Raw cosine similarity: {raw_cosine:.4f} (Transformed display index: {display_score:.1f}/100). "
-            f"Processing completed in {elapsed_ms:.1f}ms on CPU. "
+            f"embeddings. Raw cosine similarity: {raw_cosine:.4f} (Display Index: {display_score:.1f}/100). "
+            f"Decision: {decision_str} (Threshold tau = {threshold_used:.4f}). "
+            f"Total execution latency: {elapsed_ms:.1f}ms on CPU. "
             "NOTE: High similarity indicates facial feature proximity, but does NOT constitute "
             "absolute proof that both images depict the same person."
         )
@@ -346,9 +467,15 @@ class RealFacialEmbeddingEngine(FacialEmbeddingEngine):
             similarity_score=round(raw_cosine, 4),
             raw_cosine_similarity=round(raw_cosine, 4),
             transformed_display_score=display_score,
-            provisional_threshold=PROVISIONAL_COSINE_THRESHOLD,
+            threshold_profile=profile_key,
+            threshold_used=round(threshold_used, 4),
+            decision=decision_str,
             is_match=is_match,
+            provisional_threshold=round(threshold_used, 4),
             threshold_notice=threshold_notice,
+            statistical_confidence_notice=stat_notice,
             inference_latency_ms=round(elapsed_ms, 2),
+            detection_latency_ms=round((t_a_ms + t_b_ms) / 2.0, 2),
+            embedding_latency_ms=round(elapsed_ms - ((t_a_ms + t_b_ms) / 2.0), 2),
             interpretation_notice=interpretation_notice,
         )

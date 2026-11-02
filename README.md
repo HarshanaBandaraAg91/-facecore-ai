@@ -1,155 +1,201 @@
-# FACECORE AI &mdash; Biometric Facial Evaluation Platform (Step 01)
+# FACECORE AI &mdash; Biometric Facial Verification & Evaluation Platform
 
-FACECORE AI is a standalone facial-image similarity and model-evaluation platform engineered with strict scientific integrity, cryptographic validation, and modular biometric neural architectures.
+[![Release](https://img.shields.io/badge/release-v1.0.0--prod-emerald?style=flat-square)](STEP11_FINAL_RELEASE_AUDIT.md)
+[![Python](https://img.shields.io/badge/python-3.10%20%7C%203.11%20%7C%203.12%20%7C%203.13-blue?style=flat-square)](backend/requirements.txt)
+[![Frontend](https://img.shields.io/badge/frontend-React%2018%20%2B%20Vite%205-purple?style=flat-square)](frontend/package.json)
+[![Tests](https://img.shields.io/badge/tests-166%2F166%20passed%20(100%25)-brightgreen?style=flat-square)](STEP11_REGRESSION_AUDIT.md)
+[![Biometrics](https://img.shields.io/badge/biometrics-OpenCV%20YuNet%20%2B%20SFace%20(128--d)-crimson?style=flat-square)](docs/MODEL_PROVENANCE.md)
+[![Privacy](https://img.shields.io/badge/privacy-100%25%20Ephemeral%20RAM-success?style=flat-square)](STEP11_SECURITY_PRIVACY_AUDIT.md)
+[![License](https://img.shields.io/badge/license-Apache--2.0-lightgrey?style=flat-square)](LICENSE)
 
----
-
-## Key Principles & Design Philosophy
-
-- **Zero Score Fabrication:** In Phase 1, inference models are pending integration. The platform explicitly withholds synthetic, random, or fake similarity percentages.
-- **Scientific Humility:** A facial similarity score reflects continuous vector distance in a latent hypersphere&mdash;it is never proof of 100% identity.
-- **Ephemeral In-Memory Privacy:** Image payloads exist only in RAM during validation and comparison. Zero biometric photos, vectors, or face crops are saved to disk or external cloud servers.
-- **No Surveillance / Scraping:** No social-media scraping, external identity lookups, or global face search routines exist within this codebase.
-- **Cyber-Intelligence Aesthetic:** Obsidian and charcoal surfaces, tactical crimson-red accents, emerald validation indicators, and high-precision monospace telemetry.
+**FACECORE AI** is a production-engineered, locally deployable biometric facial verification and evaluation platform. Built with strict mathematical discipline, scientific transparency, and zero score fabrication, it provides high-precision pairwise facial image comparison, automated quality diagnostics, and reproducible benchmark auditing.
 
 ---
 
-## Repository Architecture
+## Key Capabilities & Architectural Principles
 
-```
-project 7 - face checking tool/
+- **Dual-Model Local Neural Pipeline:**
+  - **Detector:** OpenCV YuNet (depthwise separable convolution with 5-point landmark localization).
+  - **Recognizer:** OpenCV SFace / SphereFace2 (128-dimensional hyperspherical margin feature extraction).
+  - **Metric:** Exact inner dot-product cosine similarity bounded in $[-1.0, 1.0]$.
+- **Ephemeral In-Memory Privacy (Zero Persistence):**
+  - Image payloads are decoded directly in RAM (`cv2.imdecode`) and discarded post-comparison.
+  - Zero raw images, facial crops, or 128-dimensional embedding vectors are ever saved to disk or external services.
+  - Strictly 100% offline local inference; zero telemetry or phone-home calls.
+- **Calibrated Operating Profiles:**
+  - `High Security` ($\tau = 0.3600$): Target FAR $\le 0.10\%$, out-of-fold TAR $98.47\%$ (LFW calibrated).
+  - `Balanced` ($\tau = 0.3132$): Canonical LFW Equal Error Rate (EER) crossover point ($99.50\%$ accuracy).
+  - `High Convenience` ($\tau = 0.2500$): Low false-rejection operating point.
+  - `Custom`: User-defined operating threshold with out-of-bounds safety warnings.
+- **Ambiguous Zone Protection:**
+  - Automatically flags scores falling in the statistical distribution overlap zone $[0.28, 0.35]$ with mandatory human-review advisories.
+- **Scientific Humility & Probability Non-Equivalence:**
+  - Cosine similarity reflects geometric vector proximity on a hypersphere&mdash;it is never misrepresented as an identity probability, confidence percentage, or proof of identity.
+
+---
+
+## Repository Structure
+
+```text
+facecore-ai/
 ├── backend/
 │   ├── app/
-│   │   ├── config.py              # Upload limits (10MB, 4096px), MIME & magic headers
-│   │   ├── main.py                # FastAPI endpoints: /health, /validate-image, /compare
-│   │   ├── models/
-│   │   │   └── schemas.py         # Pydantic telemetry models & diagnostics schemas
-│   │   ├── services/
-│   │   │   └── image_validator.py # Safe Pillow decoding, magic bytes, Laplacian sharpness
-│   │   └── engine/
-│   │       ├── base.py            # Abstract FacialEmbeddingEngine interface
-│   │       └── stub_engine.py     # Step 01 modular pending-integration baseline
-│   ├── tests/
-│   │   ├── test_health.py         # Health & engine metadata test suite
-│   │   └── test_validation.py     # Signature, corrupt, oversized, and pair tests
-│   ├── requirements.txt           # fastapi, uvicorn, pillow, numpy, pytest, httpx
-│   └── .venv/                     # Python 3.13 virtual environment
+│   │   ├── benchmarks/         # Standardized evaluation runners (LFW, CALFW, CPLFW)
+│   │   ├── config.py           # Ingestion ceilings, CORS, audit retention policies
+│   │   ├── db/                 # SQLite WAL audit service & schema migrations
+│   │   ├── engine/             # RealFacialEmbeddingEngine (YuNet + SFace CPU execution)
+│   │   ├── models/             # Pydantic schemas, error codes, and telemetry models
+│   │   ├── services/           # Magic byte validator, face detector, crop handlers
+│   │   ├── weights/            # Official OpenCV ONNX neural network model files
+│   │   └── main.py             # FastAPI backend with structured error masking
+│   ├── data/                   # SQLite database storage directory (.gitkeep)
+│   ├── scripts/                # Verification, load benchmarks, and security scanners
+│   ├── tests/                  # 112 pytest automated regression test cases
+│   ├── requirements.txt        # Pinned Python dependencies
+│   └── .env.example            # Backend configuration template
 │
 ├── frontend/
 │   ├── src/
-│   │   ├── components/
-│   │   │   ├── layout/            # AppShell, Sidebar, Header
-│   │   │   ├── comparison/        # ComparisonWorkspace, UploadCard, Preview, ResultPanel, Diagnostics, HistoryDrawer
-│   │   │   ├── testlab/           # TestLabView (Planned batch evaluation)
-│   │   │   ├── benchmarks/        # BenchmarksView (Standardized protocols: LFW, CFP-FP, AgeDB)
-│   │   │   ├── settings/          # SettingsView (Theme selector, API status, Privacy manifesto)
-│   │   │   └── common/            # Badge, EmptyState, Toast
-│   │   ├── services/
-│   │   │   └── api.ts             # Typed REST client reading VITE_API_BASE_URL
-│   │   ├── types/
-│   │   │   └── index.ts           # Strict TypeScript contracts
-│   │   ├── tests/
-│   │   │   ├── setup.ts           # Vitest setup
-│   │   │   └── App.test.tsx       # UI navigation and validation unit tests
-│   │   ├── index.css              # Cyber-intelligence design system in Vanilla CSS
-│   │   └── App.tsx                # Root state router and tab orchestration
-│   ├── .env                       # VITE_API_BASE_URL=http://localhost:8000
-│   ├── .env.example
-│   ├── package.json
-│   ├── tsconfig.json
-│   └── vite.config.ts
+│   │   ├── components/         # Comparison, Dashboard, Benchmarks, TestLab views
+│   │   ├── services/           # Typed REST client with VITE_API_BASE_URL resolution
+│   │   ├── types/              # Strict TypeScript interface contracts
+│   │   └── tests/              # 54 vitest component & workflow test cases
+│   ├── package.json            # Vite + React 18 frontend configuration
+│   ├── vite.config.ts          # Vite build and test orchestration
+│   └── .env.example            # Frontend environment template
 │
-├── README.md                      # Platform documentation & Windows PowerShell guide
-└── STEP01_REPORT.md               # Phase 1 verification report & audit
+├── docs/                       # Architecture, deployment, environment & setup guides
+├── start.ps1                   # One-click Windows PowerShell deployment launcher
+├── start.bat                   # One-click Windows Command Prompt deployment launcher
+├── .gitignore                  # Production exclusion rules (caches, venvs, DBs)
+├── .env.example                # Unified root environment template
+└── STEP11_FINAL_RELEASE_AUDIT.md # Release qualification certification & gate matrix
 ```
 
 ---
 
-## Windows PowerShell Setup Instructions
+## Quick-Start Setup (Local Desktop)
 
 ### Prerequisites
-- **Python 3.11+ / 3.13** (accessible via `py -3` launcher or `python`)
-- **Node.js v18+ / v22+** and `npm`
+- **Python:** 3.10 to 3.13 (64-bit).
+- **Node.js:** v18.0.0 or higher with `npm`.
+- **Operating System:** Windows 10/11 x64, Linux (Ubuntu 20.04+), or macOS.
 
----
+### One-Click Launchers (Windows)
 
-### 1. Backend Setup & Startup
-
-Open a PowerShell terminal in the project root:
-
+In the repository root:
 ```powershell
-# Navigate to backend directory
-cd "c:\Projects\project 7 - face checking tool\backend"
+# PowerShell (Recommended):
+.\start.ps1
 
-# Create virtual environment (if not already created)
-py -3 -m venv .venv
-
-# Activate virtual environment
-.\.venv\Scripts\Activate.ps1
-
-# Install requirements
-pip install -r requirements.txt
-
-# Run backend unit tests (10 tests)
-pytest tests -v
-
-# Start FastAPI development server on port 8000
-python -m uvicorn app.main:app --host 127.0.0.1 --port 8000 --reload
+# Or Windows Command Prompt / Double-Click:
+start.bat
 ```
 
-Backend will be live at: `http://127.0.0.1:8000`
-Interactive API Docs (Swagger UI): `http://127.0.0.1:8000/docs`
+The script automatically validates Python, Node, model checksums, and network ports before launching:
+- **Frontend Web UI:** `http://localhost:5173`
+- **Backend REST API:** `http://127.0.0.1:8001`
+- **Interactive Swagger Docs:** `http://127.0.0.1:8001/docs`
 
 ---
 
-### 2. Frontend Setup & Startup
+## Manual Step-by-Step Setup
 
-Open a second PowerShell terminal in the project root:
+### 1. Backend Service
+```bash
+cd backend
+python -m venv .venv
 
-```powershell
-# Navigate to frontend directory
-cd "c:\Projects\project 7 - face checking tool\frontend"
+# Activate virtual environment:
+# Windows PowerShell:
+.venv\Scripts\Activate.ps1
+# Linux / macOS:
+# source .venv/bin/activate
 
-# Install npm dependencies
+pip install --upgrade pip
+pip install -r requirements.txt
+
+# Verify model weights integrity
+python scripts/verify_weights.py
+
+# Launch FastAPI backend
+python -m uvicorn app.main:app --host 127.0.0.1 --port 8001
+```
+
+### 2. Frontend Client
+```bash
+cd frontend
 npm install
-
-# Run frontend unit tests (7 tests with Vitest)
-npm test
-
-# Verify production build compilation
-npm run build
-
-# Start Vite development server
 npm run dev
 ```
 
-Frontend will be live at: `http://localhost:5173`
+---
+
+## Independent Cloud Deployment
+
+The backend and frontend can be deployed together or completely decoupled across different hosting providers:
+
+### Frontend (Static Edge Hosting: Vercel / Netlify / Cloudflare Pages)
+- **Root Directory:** `frontend/`
+- **Build Command:** `npm run build`
+- **Publish Directory:** `dist`
+- **Environment Variable:** `VITE_API_BASE_URL=https://your-api.domain.com`
+
+### Backend (Containers / PaaS: Docker, Render, Railway, AWS ECS)
+- Build the container using `backend/Dockerfile` (see [`docs/DEPLOYMENT.md`](docs/DEPLOYMENT.md)).
+- Set Environment Variables:
+  - `ENVIRONMENT=production`
+  - `CORS_ORIGINS=https://your-frontend.domain.com`
+  - `AUDIT_LOGGING_ENABLED=true`
+  - `AUDIT_RETENTION_DAYS=30`
+
+See [`docs/DEPLOYMENT.md`](docs/DEPLOYMENT.md) for full container manifests and Nginx reverse proxy configurations.
 
 ---
 
-## Phase 1 Capabilities & Safeguards
+## Neural Model Provenance & Verification
 
-| Component | Status | Details |
-| :--- | :---: | :--- |
-| **Image Validation** | Validated | Verifies true magic bytes (JPEG `FF D8 FF`, PNG `89 50 4E 47`, WebP `RIFF..WEBP`), rejects renamed executables, enforces 10 MB and 16 MP limits. |
-| **Quality Diagnostics** | Active | Computes mean luminance, contrast standard deviation, Laplacian variance sharpness, and aspect ratio. |
-| **Modular Engine Interface** | Active | Abstract `FacialEmbeddingEngine` contract ready to receive ArcFace, AdaFace, or FaceNet in Step 02. |
-| **Compare Action** | Anti-Fabrication | Correctly reports `status: "engine_pending_integration"`, withholds simulated percentages, and generates image differential analysis. |
-| **Metadata History** | Ephemeral | Stores evaluation metadata (SHA-256 prefixes, dimensions, timestamp) in session memory with zero image persistence. |
-| **Cyber Aesthetics** | Active | Dark charcoal background, crimson accents, monospace telemetry, accessible keyboard navigation, responsive layout. |
+FACECORE AI relies on two official, open-source model files under the Apache-2.0 license:
 
----
+| Model File | Architecture / Role | Input / Output | Expected SHA-256 |
+| :--- | :--- | :--- | :--- |
+| `face_detection_yunet_2023mar.onnx` | YuNet 5-point landmark detector | $320 \times 320 \to$ BBox + 5 Landmarks | `8f2383e4dd3cfbb4553ea8718107fc0423210dc964f9f4280604804ed2552fa4` |
+| `face_recognition_sface_2021dec.onnx` | SFace (SphereFace2) feature extractor | $112 \times 112 \to$ 128-d Hyperspherical Vector | `0ba9fbfa01b5270c96627c4ef784da859931e02f04419c829e83484087c34e79` |
 
-## Known Limitations in Phase 1
-
-1. **No Neural Inference:** Face similarity scoring is not active until a documented model checkpoint (e.g., ArcFace-ResNet100) is mounted in Step 02.
-2. **Face Detection Landmark Crop:** In Step 01, technical diagnostics are computed on the full container image. Landmark alignment (MTCNN / RetinaFace) is slated for Step 02.
-3. **No Batch Test Execution:** The Test Lab and Benchmarks pages present architecture definitions and protocols; benchmark runs await Step 02/03.
+To verify bitwise cryptographic integrity at any time:
+```bash
+python backend/scripts/verify_weights.py
+```
 
 ---
 
-## Privacy & Ethical Governance Manifesto
+## Quality Assurance & Automated Testing
 
-1. **Ephemeral Processing:** Uploaded images are evaluated in-memory and discarded upon response delivery.
-2. **Local Execution:** No images or biometric coordinates are transmitted to external clouds or third-party servers.
-3. **Auditability:** Every pair comparison outputs a tamper-evident SHA-256 fingerprint prefix and exportable JSON telemetry report.
+The codebase maintains a 100% pass rate across 166 automated regression tests:
+
+```bash
+# Run backend pytest suite (112 tests)
+pytest backend/tests -v
+
+# Run frontend Vitest suite (54 tests)
+npm --prefix frontend test -- --run
+
+# Compile production TypeScript build
+npm --prefix frontend run build
+```
+
+---
+
+## Documentation Index
+
+- [`docs/DEPLOYMENT.md`](docs/DEPLOYMENT.md): Container, PaaS, and static edge deployment guides.
+- [`docs/ENV_VARS.md`](docs/ENV_VARS.md): Complete environment variable reference.
+- [`docs/GITHUB_SETUP.md`](docs/GITHUB_SETUP.md): GitHub setup, Git LFS notes, and CI workflows.
+- [`docs/MODEL_PROVENANCE.md`](docs/MODEL_PROVENANCE.md): Neural network architecture and license details.
+- [`STEP11_FINAL_RELEASE_AUDIT.md`](STEP11_FINAL_RELEASE_AUDIT.md): Comprehensive production acceptance audit report.
+
+---
+
+## License
+
+This software and its official model weights are distributed under the [Apache-2.0 License](LICENSE).

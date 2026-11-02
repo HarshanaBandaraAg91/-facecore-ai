@@ -25,6 +25,8 @@ export const Header: React.FC<HeaderProps> = ({
 }) => {
   const getTabTitle = (tab: NavTab) => {
     switch (tab) {
+      case 'dashboard':
+        return 'Production Biometric Audit & Operational Telemetry';
       case 'compare':
         return 'Facial Image Comparison & Quality Validation';
       case 'testlab':

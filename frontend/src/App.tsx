@@ -1,5 +1,6 @@
 import { useState, useEffect, useCallback } from 'react';
 import { AppShell } from './components/layout/AppShell';
+import { DashboardView } from './components/dashboard/DashboardView';
 import { ComparisonWorkspace } from './components/comparison/ComparisonWorkspace';
 import { HistoryDrawer } from './components/comparison/HistoryDrawer';
 import { TestLabView } from './components/testlab/TestLabView';
@@ -98,6 +99,13 @@ export function App() {
       toasts={toasts}
       onDismissToast={dismissToast}
     >
+      {activeTab === 'dashboard' && (
+        <DashboardView
+          onNavigate={setActiveTab}
+          onShowToast={showToast}
+        />
+      )}
+
       {activeTab === 'compare' && (
         <ComparisonWorkspace
           onAddHistory={handleAddHistory}

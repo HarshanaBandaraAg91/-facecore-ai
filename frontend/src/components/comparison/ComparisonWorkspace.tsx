@@ -11,6 +11,7 @@ import type {
   ComparisonResponse,
   ComparisonHistoryEntry,
   ComparisonProcessingState,
+  ThresholdProfile,
 } from '../../types';
 import { ImageUploadCard } from './ImageUploadCard';
 import { ComparisonProgress } from './ComparisonProgress';
@@ -46,6 +47,8 @@ export const ComparisonWorkspace: React.FC<ComparisonWorkspaceProps> = ({
     diagnostics: null,
     isValidating: false,
     validationError: null,
+    selectedFaceIndex: null,
+    cropBox: null,
   });
 
   const [slotB, setSlotB] = useState<UploadedImageSlot>({
@@ -56,11 +59,16 @@ export const ComparisonWorkspace: React.FC<ComparisonWorkspaceProps> = ({
     diagnostics: null,
     isValidating: false,
     validationError: null,
+    selectedFaceIndex: null,
+    cropBox: null,
   });
+
 
   // State machine for comparison lifecycle
   const [comparisonState, setComparisonState] =
     useState<ComparisonProcessingState>('idle');
+  const [thresholdProfile, setThresholdProfile] = useState<ThresholdProfile>('balanced');
+  const [customThreshold, setCustomThreshold] = useState<number>(0.3132);
   const [progressPercent, setProgressPercent] = useState<number>(0);
   const [currentStageIndex, setCurrentStageIndex] = useState<number>(0);
   const [comparisonError, setComparisonError] = useState<string | null>(null);
@@ -78,11 +86,14 @@ export const ComparisonWorkspace: React.FC<ComparisonWorkspaceProps> = ({
     comparisonState === 'processing' ||
     comparisonState === 'completing';
 
-  // Both images must be loaded, have valid diagnostics, and not have pending validation
+  // Both images must be loaded, have valid diagnostics, contain at least 1 localized face, and not have pending validation
   const canCompare =
     Boolean(slotA.file && slotA.diagnostics && !slotA.isValidating && !slotA.validationError) &&
     Boolean(slotB.file && slotB.diagnostics && !slotB.isValidating && !slotB.validationError) &&
+    (slotA.diagnostics?.face_count === undefined || slotA.diagnostics.face_count > 0) &&
+    (slotB.diagnostics?.face_count === undefined || slotB.diagnostics.face_count > 0) &&
     !isComparing;
+
 
   // Cleanup timers and abort controllers on unmount
   useEffect(() => {
@@ -130,6 +141,8 @@ export const ComparisonWorkspace: React.FC<ComparisonWorkspaceProps> = ({
       diagnostics: null,
       isValidating: false,
       validationError: null,
+      selectedFaceIndex: null,
+      cropBox: null,
     });
     setComparisonResult(null);
   };
@@ -145,9 +158,12 @@ export const ComparisonWorkspace: React.FC<ComparisonWorkspaceProps> = ({
       diagnostics: null,
       isValidating: false,
       validationError: null,
+      selectedFaceIndex: null,
+      cropBox: null,
     });
     setComparisonResult(null);
   };
+
 
   const handleSwapSlots = () => {
     if (isComparing) return;
@@ -233,9 +249,22 @@ export const ComparisonWorkspace: React.FC<ComparisonWorkspaceProps> = ({
     });
 
     try {
-      const apiPromise = compareImagesApi(slotA.file, slotB.file, abortController.signal);
+      const apiPromise = compareImagesApi(slotA.file, slotB.file, {
+        selectedFaceA:
+          slotA.selectedFaceIndex ??
+          (slotA.diagnostics?.face_count && slotA.diagnostics.face_count > 1 ? 0 : undefined),
+        selectedFaceB:
+          slotB.selectedFaceIndex ??
+          (slotB.diagnostics?.face_count && slotB.diagnostics.face_count > 1 ? 0 : undefined),
+        cropBoxA: slotA.cropBox,
+        cropBoxB: slotB.cropBox,
+        thresholdProfile: thresholdProfile,
+        customThreshold: thresholdProfile === 'custom' ? customThreshold : undefined,
+        signal: abortController.signal,
+      });
 
       // Concurrently wait for BOTH:
+
       // 1. Real API call completion & validation
       // 2. Minimum visual duration (approx 5.0 seconds)
       // If apiPromise rejects, Promise.all rejects IMMEDIATELY without waiting 5 seconds!
@@ -389,6 +418,96 @@ export const ComparisonWorkspace: React.FC<ComparisonWorkspaceProps> = ({
 
       {/* Central Comparison Control Bar */}
       <div className="compare-action-section">
+        {/* Step 10: Calibrated Threshold Profile Selector */}
+        <div style={{ display: 'flex', alignItems: 'center', gap: '10px', flexWrap: 'wrap', justifyContent: 'center', marginBottom: '16px' }}>
+          <span style={{ fontSize: '11px', color: 'var(--text-muted)', textTransform: 'uppercase', letterSpacing: '0.05em', fontWeight: 600 }}>
+            Operating Profile:
+          </span>
+          <div style={{ display: 'flex', gap: '6px', backgroundColor: 'var(--bg-input)', padding: '3px', borderRadius: '6px', border: '1px solid var(--border-subtle)' }}>
+            <button
+              type="button"
+              className={`btn btn-sm ${thresholdProfile === 'high_security' ? 'btn-primary' : 'btn-secondary'}`}
+              onClick={() => setThresholdProfile('high_security')}
+              disabled={isComparing}
+              style={{ fontSize: '11px', padding: '4px 8px' }}
+              title="Target FAR <= 0.1% (High Security tau = 0.3600)"
+            >
+              High Security (&tau;=0.3600)
+            </button>
+            <button
+              type="button"
+              className={`btn btn-sm ${thresholdProfile === 'balanced' ? 'btn-primary' : 'btn-secondary'}`}
+              onClick={() => setThresholdProfile('balanced')}
+              disabled={isComparing}
+              style={{ fontSize: '11px', padding: '4px 8px' }}
+              title="LFW Native EER Calibration (tau = 0.3132)"
+            >
+              Balanced (&tau;=0.3132)
+            </button>
+            <button
+              type="button"
+              className={`btn btn-sm ${thresholdProfile === 'high_convenience' ? 'btn-primary' : 'btn-secondary'}`}
+              onClick={() => setThresholdProfile('high_convenience')}
+              disabled={isComparing}
+              style={{ fontSize: '11px', padding: '4px 8px' }}
+              title="Low False Rejection (tau = 0.2500)"
+            >
+              High Convenience (&tau;=0.2500)
+            </button>
+            <button
+              type="button"
+              className={`btn btn-sm ${thresholdProfile === 'custom' ? 'btn-primary' : 'btn-secondary'}`}
+              onClick={() => setThresholdProfile('custom')}
+              disabled={isComparing}
+              style={{ fontSize: '11px', padding: '4px 8px' }}
+              title="User-defined decision threshold"
+            >
+              Custom
+            </button>
+          </div>
+          {thresholdProfile === 'custom' && (
+            <div style={{ display: 'flex', alignItems: 'center', gap: '4px' }}>
+              <label htmlFor="custom-thresh-input" style={{ fontSize: '11px', color: 'var(--text-muted)' }}>&tau; =</label>
+              <input
+                id="custom-thresh-input"
+                type="number"
+                step="0.01"
+                min="-1"
+                max="1"
+                value={customThreshold}
+                onChange={(e) => setCustomThreshold(parseFloat(e.target.value) || 0.3)}
+                disabled={isComparing}
+                style={{
+                  width: '70px',
+                  padding: '3px 6px',
+                  fontSize: '11px',
+                  fontFamily: 'var(--font-mono)',
+                  backgroundColor: 'var(--bg-input)',
+                  border: '1px solid var(--border-subtle)',
+                  borderRadius: '4px',
+                  color: 'var(--text-bright)',
+                }}
+              />
+            </div>
+          )}
+        </div>
+
+        {/* Warning when custom threshold is outside recommended range [0.20, 0.45] */}
+        {thresholdProfile === 'custom' && (customThreshold < 0.20 || customThreshold > 0.45) && (
+          <div
+            style={{
+              fontSize: '11px',
+              color: '#f59e0b',
+              textAlign: 'center',
+              marginBottom: '12px',
+              fontWeight: 500,
+            }}
+          >
+            Warning: Custom threshold (&tau; = {customThreshold.toFixed(2)}) is outside recommended calibrated range [0.20, 0.45].
+            {customThreshold < 0.20 ? ' Severely elevated False Accept Rate (FAR).' : ' Severely elevated False Reject Rate (FRR).'}
+          </div>
+        )}
+
         <div className="compare-btn-wrapper">
           <button
             onClick={handleExecuteComparison}

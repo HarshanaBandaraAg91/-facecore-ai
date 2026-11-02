@@ -4,10 +4,14 @@ import {
   FileCheck2,
   AlertCircle,
   Loader2,
+  AlertTriangle,
+  Crop,
 } from 'lucide-react';
 import type { UploadedImageSlot } from '../../types';
 import { ImagePreview } from './ImagePreview';
 import { QualityDiagnostics } from './QualityDiagnostics';
+import { FaceSelectionBar } from './FaceSelectionBar';
+import { ManualCropModal } from './ManualCropModal';
 import { validateImageApi } from '../../services/api';
 
 interface ImageUploadCardProps {
@@ -26,6 +30,7 @@ export const ImageUploadCard: React.FC<ImageUploadCardProps> = ({
 }) => {
   const fileInputRef = useRef<HTMLInputElement>(null);
   const [isDragActive, setIsDragActive] = useState(false);
+  const [isCropModalOpen, setIsCropModalOpen] = useState(false);
 
   const processFile = async (selectedFile: File) => {
     // Client-side quick sanity check
@@ -35,6 +40,8 @@ export const ImageUploadCard: React.FC<ImageUploadCardProps> = ({
         file: null,
         previewUrl: null,
         diagnostics: null,
+        selectedFaceIndex: null,
+        cropBox: null,
         isValidating: false,
         validationError:
           'Unsupported file format. Please upload an authentic JPEG, PNG, or WebP image.',
@@ -47,6 +54,8 @@ export const ImageUploadCard: React.FC<ImageUploadCardProps> = ({
         file: null,
         previewUrl: null,
         diagnostics: null,
+        selectedFaceIndex: null,
+        cropBox: null,
         isValidating: false,
         validationError: `File size (${(
           selectedFile.size /
@@ -65,21 +74,33 @@ export const ImageUploadCard: React.FC<ImageUploadCardProps> = ({
       isValidating: true,
       validationError: null,
       diagnostics: null,
+      selectedFaceIndex: null,
+      cropBox: null,
     });
 
     try {
       // Validate with backend server
       const res = await validateImageApi(selectedFile);
       if (res.is_valid && res.diagnostics) {
+        const faceCount = res.diagnostics.face_count ?? 0;
+        const defaultIndex = faceCount > 1 ? 0 : null;
+        if (defaultIndex !== null) {
+          res.diagnostics.selected_face_index = defaultIndex;
+        }
+
         onUpdateSlot({
           isValidating: false,
           diagnostics: res.diagnostics,
+          selectedFaceIndex: defaultIndex,
+          cropBox: null,
           validationError: null,
         });
       } else {
         onUpdateSlot({
           isValidating: false,
           diagnostics: null,
+          selectedFaceIndex: null,
+          cropBox: null,
           validationError: res.error_message || 'Image failed backend security checks.',
         });
       }
@@ -88,8 +109,89 @@ export const ImageUploadCard: React.FC<ImageUploadCardProps> = ({
       onUpdateSlot({
         isValidating: false,
         diagnostics: null,
+        selectedFaceIndex: null,
+        cropBox: null,
         validationError: msg,
       });
+    }
+  };
+
+  const handleSelectFace = (index: number) => {
+    if (!slot.diagnostics) return;
+    const updatedDiag = {
+      ...slot.diagnostics,
+      selected_face_index: index,
+    };
+    if (slot.diagnostics.detected_faces && slot.diagnostics.detected_faces[index]) {
+      const f = slot.diagnostics.detected_faces[index];
+      updatedDiag.face_confidence = f.confidence;
+      updatedDiag.face_bounding_box = f.box;
+    }
+    onUpdateSlot({
+      selectedFaceIndex: index,
+      diagnostics: updatedDiag,
+    });
+  };
+
+  const handleApplyCrop = async (cropBox: [number, number, number, number]) => {
+    if (!slot.file) return;
+    onUpdateSlot({ isValidating: true, validationError: null });
+    try {
+      const res = await validateImageApi(slot.file, cropBox);
+      if (res.is_valid && res.diagnostics) {
+        const faceCount = res.diagnostics.face_count ?? 0;
+        const defaultIndex = faceCount > 1 ? 0 : null;
+        if (defaultIndex !== null) {
+          res.diagnostics.selected_face_index = defaultIndex;
+        }
+
+        onUpdateSlot({
+          isValidating: false,
+          diagnostics: res.diagnostics,
+          selectedFaceIndex: defaultIndex,
+          cropBox,
+          validationError: null,
+        });
+      } else {
+        onUpdateSlot({
+          isValidating: false,
+          validationError: res.error_message || 'Cropped region validation failed.',
+        });
+      }
+    } catch (err: unknown) {
+      const msg = err instanceof Error ? err.message : 'Crop re-validation failed.';
+      onUpdateSlot({ isValidating: false, validationError: msg });
+    }
+  };
+
+  const handleResetCrop = async () => {
+    if (!slot.file) return;
+    onUpdateSlot({ isValidating: true, validationError: null });
+    try {
+      const res = await validateImageApi(slot.file, null);
+      if (res.is_valid && res.diagnostics) {
+        const faceCount = res.diagnostics.face_count ?? 0;
+        const defaultIndex = faceCount > 1 ? 0 : null;
+        if (defaultIndex !== null) {
+          res.diagnostics.selected_face_index = defaultIndex;
+        }
+
+        onUpdateSlot({
+          isValidating: false,
+          diagnostics: res.diagnostics,
+          selectedFaceIndex: defaultIndex,
+          cropBox: null,
+          validationError: null,
+        });
+      } else {
+        onUpdateSlot({
+          isValidating: false,
+          validationError: res.error_message || 'Full image validation failed.',
+        });
+      }
+    } catch (err: unknown) {
+      const msg = err instanceof Error ? err.message : 'Image re-validation failed.';
+      onUpdateSlot({ isValidating: false, validationError: msg });
     }
   };
 
@@ -108,6 +210,7 @@ export const ImageUploadCard: React.FC<ImageUploadCardProps> = ({
 
   const handleDragLeave = (e: React.DragEvent) => {
     e.preventDefault();
+    if (disabled) return;
     setIsDragActive(false);
   };
 
@@ -124,6 +227,8 @@ export const ImageUploadCard: React.FC<ImageUploadCardProps> = ({
     if (disabled) return;
     fileInputRef.current?.click();
   };
+
+  const faceCount = slot.diagnostics?.face_count ?? 0;
 
   return (
     <div className="card upload-panel">
@@ -172,9 +277,9 @@ export const ImageUploadCard: React.FC<ImageUploadCardProps> = ({
             <div className="dropzone-icon-ring">
               <UploadCloud size={24} />
             </div>
-            <div className="dropzone-label">Click or Drag & Drop Image</div>
+            <div className="dropzone-label">Click or Drag &amp; Drop Image</div>
             <div className="dropzone-subtext">
-              JPEG, PNG, or WebP up to 10 MB. Verified via magic bytes & safe decoding.
+              JPEG, PNG, or WebP up to 10 MB. Verified via magic bytes, YuNet localization &amp; SFace.
             </div>
           </div>
         )}
@@ -189,6 +294,10 @@ export const ImageUploadCard: React.FC<ImageUploadCardProps> = ({
               onRemove={onClearSlot}
               slotLabel={slot.label}
               disabled={disabled}
+              selectedFaceIndex={slot.selectedFaceIndex}
+              onSelectFace={handleSelectFace}
+              onOpenCrop={() => setIsCropModalOpen(true)}
+              onResetCrop={slot.cropBox ? handleResetCrop : undefined}
             />
 
             {/* Loading Validation State */}
@@ -209,13 +318,72 @@ export const ImageUploadCard: React.FC<ImageUploadCardProps> = ({
                 }}
               >
                 <Loader2 size={16} className="spin-icon" color="var(--crimson-primary)" />
-                <span>Validating container signature & pixel integrity...</span>
+                <span>Running YuNet face localization &amp; biometric telemetry...</span>
+              </div>
+            )}
+
+            {/* Multi-Face Selection Bar */}
+            {slot.diagnostics && slot.diagnostics.detected_faces && slot.diagnostics.detected_faces.length > 1 && (
+              <FaceSelectionBar
+                faces={slot.diagnostics.detected_faces}
+                selectedFaceIndex={slot.selectedFaceIndex}
+                onSelectFace={handleSelectFace}
+                disabled={disabled}
+              />
+            )}
+
+            {/* Zero Face Recovery Banner */}
+            {slot.diagnostics && faceCount === 0 && !slot.isValidating && (
+              <div
+                className="alert-banner alert-crimson"
+                style={{
+                  marginTop: '12px',
+                  display: 'flex',
+                  alignItems: 'center',
+                  justifyContent: 'space-between',
+                  gap: '12px',
+                  flexWrap: 'wrap',
+                }}
+                role="alert"
+              >
+                <div style={{ display: 'flex', alignItems: 'center', gap: '8px' }}>
+                  <AlertTriangle size={16} style={{ flexShrink: 0 }} />
+                  <span style={{ fontSize: '12px' }}>
+                    <strong>No face detected.</strong> Use Manual Crop to frame the face region.
+                  </span>
+                </div>
+                <button
+                  type="button"
+                  onClick={() => setIsCropModalOpen(true)}
+                  disabled={disabled}
+                  className="btn btn-primary btn-sm"
+                  style={{
+                    backgroundColor: 'var(--crimson-primary)',
+                    borderColor: 'var(--crimson-border)',
+                  }}
+                >
+                  <Crop size={13} />
+                  <span>Manual Face Crop</span>
+                </button>
               </div>
             )}
 
             {/* Technical Diagnostics */}
             {slot.diagnostics && (
               <QualityDiagnostics diagnostics={slot.diagnostics} />
+            )}
+
+            {/* Manual Crop Modal */}
+            {isCropModalOpen && slot.diagnostics && (
+              <ManualCropModal
+                isOpen={isCropModalOpen}
+                onClose={() => setIsCropModalOpen(false)}
+                imageUrl={slot.previewUrl}
+                imageWidth={slot.diagnostics.width}
+                imageHeight={slot.diagnostics.height}
+                initialCropBox={slot.cropBox}
+                onApplyCrop={handleApplyCrop}
+              />
             )}
           </div>
         )}
